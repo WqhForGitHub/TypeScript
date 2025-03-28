@@ -183,5 +183,84 @@ interface Document {
 }
 ```
 
+<br>
+
+<br>
+
+# interface 与 type 的异同
+
+**`type 可以用来定义原始类型、联合类型和元组，而 interface 不能。`**
+
+```typescript
+type Name = string;
+type NumOrString = number | string;
+type Point = [number, number];
+```
+
+**`interface 和 type 都可以用来定义对象类型，但在语法上略有不同。`**
+
+```typescript
+interface Person {
+    name: string;
+    age: number;
+}
+
+type Person = {
+    name: string;
+    age: number;
+}
+```
+
+**`type 和 interface 都可以用来定义函数类型，但推荐使用 type，因为它更简洁。`**
+
+```typescript
+type Add = (x: number, y: number) => number;
+
+interface Add {
+    (x: number, y: number): number;
+}
+```
+
+**`interface 使用 extends 关键字来扩展，而 type 使用交叉类型（&）。`**
+
+```typescript
+interface Animal {
+    name: string;
+}
+
+interface Dog extends Animal {
+    bark(): void;
+}
+
+type Animal = {
+    name: string;
+};
+
+type Dog = Animal & {
+    bark(): void;
+}
+```
+
+**`interface 支持声明合并，即可以多次声明同一个接口，TypeScript 编译器会自动它们合并成一个接口定义。这在扩展第三方库的类型定义时非常有用。`**
+
+```typescript
+interface Person {
+    name: string;
+}
+
+interface Person {
+    age: number;
+}
+
+const person: Person = {
+    name: "John",
+    age: 30
+}
+```
+
+
+
+
+
 
 
