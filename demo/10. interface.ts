@@ -15,10 +15,10 @@ const p: Person = {
 };
 
 // 方括号取出属性类型
-interface Foo {
+interface FooBracket {
   a: string;
 }
-type A = Foo["a"]; // string
+type A = FooBracket["a"]; // string
 
 // ==================== 接口成员的5种形式 ====================
 
@@ -94,13 +94,13 @@ interface CountryWithPop extends Country {
 }
 
 // 继承 class
-class A {
+class ClassA {
   x: string = "";
   y(): boolean {
     return true;
   }
 }
-interface B extends A {
+interface B extends ClassA {
   z: number;
 }
 const bInstance: B = {
@@ -163,8 +163,8 @@ interface Bear2 extends Animal2 {
 }
 
 // interface 可以继承 type
-type Foo = { x: number };
-interface Bar extends Foo {
+type FooType = { x: number };
+interface BarExt extends FooType {
   y: number;
 }
 

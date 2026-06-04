@@ -22,7 +22,7 @@ tsIgnoreX = false; // 不报错
 
 // ==================== @ts-expect-error ====================
 
-// @ts-expect-error 压制下一行的类型错误
+// "@ts-expect-error" 压制下一行的类型错误
 // 如果下一行没有错误，会显示提示
 function doStuff2(abc: string, xyz: string) {
   // ...
@@ -30,11 +30,6 @@ function doStuff2(abc: string, xyz: string) {
 
 // @ts-expect-error
 doStuff2(123, 456);
-
-// 如果下一行没有类型错误
-// @ts-expect-error
-// console.log(1 + 1);
-// 输出：Unused '@ts-expect-error' directive.
 
 // ==================== JSDoc ====================
 

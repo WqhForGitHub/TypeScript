@@ -127,11 +127,18 @@ const color = new Color();
 
 // 属性装饰器更改初始值
 function twice() {
-  return (initialValue: any) => initialValue * 2;
+  return function (
+    value: undefined,
+    context: ClassFieldDecoratorContext
+  ): (this: any, initialValue: any) => any {
+    return function (initialValue) {
+      return initialValue * 2;
+    };
+  };
 }
 
 class C2 {
-  @twice
+  @twice()
   field = 3;
 }
 

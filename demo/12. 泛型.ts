@@ -3,7 +3,7 @@
 // ==================== 简介 ====================
 
 function getFirst<T>(arr: T[]): T {
-  return arr[0];
+  return arr[0]!;
 }
 
 getFirst<number>([1, 2, 3]);
@@ -46,12 +46,12 @@ let myFn: Fn = id;
 // ==================== 类的泛型写法 ====================
 
 class Pair<K, V> {
-  key: K;
-  value: V;
+  key!: K;
+  value!: V;
 }
 
 class A<T> {
-  value: T;
+  value!: T;
 }
 
 class B extends A<any> {}
@@ -85,7 +85,7 @@ type Tree<T> = {
 // ==================== 类型参数的默认值 ====================
 
 function getFirstDefault<T = string>(arr: T[]): T {
-  return arr[0];
+  return arr[0]!;
 }
 
 class Generic<T = string> {

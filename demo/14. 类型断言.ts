@@ -34,7 +34,7 @@ const m: string = n as unknown as string; // 正确
 
 // let 推断为基本类型，const 推断为值类型
 let s1 = "JavaScript"; // string
-const s2 = "JavaScript"; // "JavaScript"
+const s2_const = "JavaScript"; // "JavaScript"
 
 // as const 将 let 变量断言为 const
 let s3 = "JavaScript" as const;

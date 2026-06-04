@@ -6,7 +6,7 @@ function addOne(n: number) {
   return n + 1;
 }
 
-addOne("hello"); // 报错
+// addOne("hello"); // 报错
 
 // ==================== 动态类型与静态类型 ====================
 

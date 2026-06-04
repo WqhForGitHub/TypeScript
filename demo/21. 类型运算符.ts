@@ -195,6 +195,7 @@ type RGB = [number, number, number];
 const palette = {
   red: [255, 0, 0],
   green: "#00ff00",
+  blue: [0, 0, 255],
   // bleu: [0, 0, 255], // satisfies 会报错，拼写错误
 } satisfies Record<Colors, string | RGB>;
 
@@ -204,5 +205,6 @@ const greenComponent = palette.green.substring(1); // 正确
 const palette2 = {
   red: [255, 0, 0],
   green: "#00ff00",
+  blue: [0, 0, 255],
   // blue: [0, 0], // satisfies 会报错，RGB 需要三个成员
 } satisfies Record<Colors, string | RGB>;

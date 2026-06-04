@@ -1,0 +1,24 @@
+{
+  "name": "ts",
+  "version": "1.0.0",
+  "description": "TypeScript 语法学习笔记，包含文档和示例代码。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WqhForGitHub/TypeScript.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/WqhForGitHub/TypeScript/issues"
+  },
+  "homepage": "https://github.com/WqhForGitHub/TypeScript#readme",
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
