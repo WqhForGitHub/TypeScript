@@ -2,7 +2,7 @@
   // Visit https://aka.ms/tsconfig to read more about this file
   "compilerOptions": {
     // File Layout
-    "rootDir": "demo",
+    "rootDir": "document demo",
     "outDir": "dist",
 
     // Environment Settings
@@ -42,6 +42,8 @@
     "skipLibCheck": true,
 
     "moduleResolution": "bundler",
-    "esModuleInterop": true,
-  }
+    "esModuleInterop": true
+  },
+  "include": ["document demo/**/*"],
+  "exclude": ["node_modules", "dist", "demo"]
 }
