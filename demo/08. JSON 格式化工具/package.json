@@ -1,0 +1,21 @@
+{
+  "name": "json-formatter",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的命令行 JSON 格式化工具，支持格式化、压缩、校验、查询等操作。",
+  "main": "dist/index.js",
+  "bin": {
+    "json-fmt": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "json", "formatter", "minify", "validate"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

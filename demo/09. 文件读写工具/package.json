@@ -1,0 +1,21 @@
+{
+  "name": "file-rw-tool",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的命令行文件读写工具，支持文件读取、写入、追加、复制、移动、删除、信息查看等操作。",
+  "main": "dist/index.js",
+  "bin": {
+    "file-rw": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "file", "read", "write", "tool"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

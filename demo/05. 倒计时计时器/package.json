@@ -1,0 +1,21 @@
+{
+  "name": "countdown-timer",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的命令行倒计时计时器，支持按秒/分/时/天倒计时或倒计时到指定时间点。",
+  "main": "dist/index.js",
+  "bin": {
+    "countdown-cli": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "countdown", "timer"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
