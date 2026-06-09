@@ -1,0 +1,21 @@
+{
+  "name": "todo-cli",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的命令行 Todo 管理工具，支持增删改查、标记完成、统计等功能。",
+  "main": "dist/index.js",
+  "bin": {
+    "todo-cli": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "todo", "task"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
