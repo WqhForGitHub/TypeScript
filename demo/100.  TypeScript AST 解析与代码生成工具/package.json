@@ -1,0 +1,26 @@
+{
+  "name": "typescript-ast-tool",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的 TypeScript AST 解析与代码生成工具演示。",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": [
+    "typescript",
+    "ast",
+    "parser",
+    "code-generation",
+    "compiler-api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "typescript": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0"
+  }
+}

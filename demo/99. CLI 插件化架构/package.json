@@ -1,0 +1,18 @@
+{
+  "name": "cli-plugin-architecture",
+  "version": "1.0.0",
+  "description": "CLI 插件化架构 Demo - 纯 TypeScript 实现的插件系统",
+  "main": "dist/index.js",
+  "bin": {
+    "pluggy": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
