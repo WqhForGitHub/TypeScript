@@ -1,0 +1,17 @@
+{
+  "name": "hmr-experiment",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的模块热重载实验演示，支持 Node.js 端模块热替换和浏览器端 HMR Dev Server。",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "hmr", "hot-reload", "module-replacement", "dev-server"],
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -34,17 +34,17 @@ const PORT = 3000;
 
 // ==================== 类型定义 ====================
 interface ChatMessage {
-  type: "message" | "nickname" | "system" | "users" | "welcome";
-  from?: string;
-  content?: string;
-  name?: string;
-  users?: string[];
-  time?: string;
+    type: "message" | "nickname" | "system" | "users" | "welcome";
+    from?: string;
+    content?: string;
+    name?: string;
+    users?: string[];
+    time?: string;
 }
 
 interface Client {
-  ws: WebSocket;
-  name: string;
+    ws: WebSocket;
+    name: string;
 }
 
 // ==================== 聊天室核心 ====================
@@ -53,103 +53,103 @@ let userCounter = 0;
 
 /** 生成默认昵称 */
 function generateName(): string {
-  userCounter++;
-  return `用户${userCounter}`;
+    userCounter++;
+    return `用户${userCounter}`;
 }
 
 /** 获取当前时间字符串 */
 function now(): string {
-  return new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    return new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
 
 /** 获取在线用户列表 */
 function getOnlineUsers(): string[] {
-  return Array.from(clients.values()).map((c) => c.name);
+    return Array.from(clients.values()).map((c) => c.name);
 }
 
 /** 向所有客户端广播消息 */
 function broadcast(message: ChatMessage): void {
-  const data = JSON.stringify(message);
-  for (const [ws] of clients) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(data);
+    const data = JSON.stringify(message);
+    for (const [ws] of clients) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(data);
+        }
     }
-  }
 }
 
 /** 广播在线用户列表 */
 function broadcastUserList(): void {
-  broadcast({ type: "users", users: getOnlineUsers() });
+    broadcast({ type: "users", users: getOnlineUsers() });
 }
 
 /** 处理客户端消息 */
 function handleMessage(ws: WebSocket, raw: string): void {
-  const client = clients.get(ws);
-  if (!client) return;
+    const client = clients.get(ws);
+    if (!client) return;
 
-  let msg: ChatMessage;
-  try {
-    msg = JSON.parse(raw);
-  } catch {
-    ws.send(
-      JSON.stringify({
-        type: "system",
-        content: "消息格式错误，请发送 JSON",
-        time: now(),
-      }),
-    );
-    return;
-  }
-
-  switch (msg.type) {
-    case "message": {
-      const content = (msg.content || "").trim();
-      if (!content) break;
-      broadcast({
-        type: "message",
-        from: client.name,
-        content,
-        time: now(),
-      });
-      break;
-    }
-    case "nickname": {
-      const newName = (msg.name || "").trim();
-      if (!newName) break;
-      // 检查昵称是否已存在
-      const exists = Array.from(clients.values()).some(
-        (c) => c.name === newName && c.ws !== ws,
-      );
-      if (exists) {
+    let msg: ChatMessage;
+    try {
+        msg = JSON.parse(raw);
+    } catch {
         ws.send(
-          JSON.stringify({
-            type: "system",
-            content: `昵称 "${newName}" 已被占用，请选择其他昵称`,
-            time: now(),
-          }),
+            JSON.stringify({
+                type: "system",
+                content: "消息格式错误，请发送 JSON",
+                time: now(),
+            }),
         );
-        break;
-      }
-      const oldName = client.name;
-      client.name = newName;
-      broadcast({
-        type: "system",
-        content: `${oldName} 已更名为 ${newName}`,
-        time: now(),
-      });
-      broadcastUserList();
-      ws.send(JSON.stringify({ type: "welcome", name: newName }));
-      break;
+        return;
     }
-    default:
-      ws.send(
-        JSON.stringify({
-          type: "system",
-          content: `未知消息类型: ${msg.type}`,
-          time: now(),
-        }),
-      );
-  }
+
+    switch (msg.type) {
+        case "message": {
+            const content = (msg.content || "").trim();
+            if (!content) break;
+            broadcast({
+                type: "message",
+                from: client.name,
+                content,
+                time: now(),
+            });
+            break;
+        }
+        case "nickname": {
+            const newName = (msg.name || "").trim();
+            if (!newName) break;
+            // 检查昵称是否已存在
+            const exists = Array.from(clients.values()).some(
+                (c) => c.name === newName && c.ws !== ws,
+            );
+            if (exists) {
+                ws.send(
+                    JSON.stringify({
+                        type: "system",
+                        content: `昵称 "${newName}" 已被占用，请选择其他昵称`,
+                        time: now(),
+                    }),
+                );
+                break;
+            }
+            const oldName = client.name;
+            client.name = newName;
+            broadcast({
+                type: "system",
+                content: `${oldName} 已更名为 ${newName}`,
+                time: now(),
+            });
+            broadcastUserList();
+            ws.send(JSON.stringify({ type: "welcome", name: newName }));
+            break;
+        }
+        default:
+            ws.send(
+                JSON.stringify({
+                    type: "system",
+                    content: `未知消息类型: ${msg.type}`,
+                    time: now(),
+                }),
+            );
+    }
 }
 
 // ==================== HTML 客户端 ====================
@@ -375,75 +375,75 @@ connect();
 
 // ==================== HTTP 服务器 ====================
 const server = http.createServer((req, res) => {
-  const pathname = url.parse(req.url || "/", true).pathname;
+    const pathname = url.parse(req.url || "/", true).pathname;
 
-  if (pathname === "/" || pathname === "/index.html") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(HTML_PAGE);
-  } else {
-    res.writeHead(404);
-    res.end("Not Found");
-  }
+    if (pathname === "/" || pathname === "/index.html") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(HTML_PAGE);
+    } else {
+        res.writeHead(404);
+        res.end("Not Found");
+    }
 });
 
 // ==================== WebSocket 服务器 ====================
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws) => {
-  const name = generateName();
-  clients.set(ws, { ws, name });
+    const name = generateName();
+    clients.set(ws, { ws, name });
 
-  // 发送欢迎消息
-  ws.send(JSON.stringify({ type: "welcome", name }));
+    // 发送欢迎消息
+    ws.send(JSON.stringify({ type: "welcome", name }));
 
-  // 广播加入通知
-  broadcast({
-    type: "system",
-    content: `${name} 加入了聊天室`,
-    time: now(),
-  });
-
-  // 广播用户列表
-  broadcastUserList();
-
-  console.log(`[+] ${name} 已连接 (当前在线: ${clients.size} 人)`);
-
-  // 处理消息
-  ws.on("message", (raw) => {
-    handleMessage(ws, raw.toString());
-  });
-
-  // 处理断开
-  ws.on("close", () => {
-    const client = clients.get(ws);
-    if (client) {
-      console.log(
-        `[-] ${client.name} 已断开 (当前在线: ${clients.size - 1} 人)`,
-      );
-      clients.delete(ws);
-      broadcast({
+    // 广播加入通知
+    broadcast({
         type: "system",
-        content: `${client.name} 离开了聊天室`,
+        content: `${name} 加入了聊天室`,
         time: now(),
-      });
-      broadcastUserList();
-    }
-  });
+    });
 
-  ws.on("error", () => {
-    // 错误时也会触发 close，无需额外处理
-  });
+    // 广播用户列表
+    broadcastUserList();
+
+    console.log(`[+] ${name} 已连接 (当前在线: ${clients.size} 人)`);
+
+    // 处理消息
+    ws.on("message", (raw) => {
+        handleMessage(ws, raw.toString());
+    });
+
+    // 处理断开
+    ws.on("close", () => {
+        const client = clients.get(ws);
+        if (client) {
+            console.log(
+                `[-] ${client.name} 已断开 (当前在线: ${clients.size - 1} 人)`,
+            );
+            clients.delete(ws);
+            broadcast({
+                type: "system",
+                content: `${client.name} 离开了聊天室`,
+                time: now(),
+            });
+            broadcastUserList();
+        }
+    });
+
+    ws.on("error", () => {
+        // 错误时也会触发 close，无需额外处理
+    });
 });
 
 // ==================== 启动 ====================
 function main(): void {
-  server.listen(PORT, () => {
-    console.log("=======================================");
-    console.log("  WebSocket 聊天室已启动");
-    console.log(`  地址: http://localhost:${PORT}`);
-    console.log("  按 Ctrl+C 停止服务器");
-    console.log("=======================================");
-  });
+    server.listen(PORT, () => {
+        console.log("=======================================");
+        console.log("  WebSocket 聊天室已启动");
+        console.log(`  地址: http://localhost:${PORT}`);
+        console.log("  按 Ctrl+C 停止服务器");
+        console.log("=======================================");
+    });
 }
 
 main();

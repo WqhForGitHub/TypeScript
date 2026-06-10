@@ -1,0 +1,17 @@
+{
+  "name": "simple-proxy-server",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的简易 HTTP 代理服务器演示，支持 HTTP 代理转发、请求日志、域名黑白名单、缓存等功能。",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "proxy", "http", "server"],
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

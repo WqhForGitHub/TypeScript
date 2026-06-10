@@ -103,7 +103,11 @@ function handleMessage(ws, raw) {
         msg = JSON.parse(raw);
     }
     catch {
-        ws.send(JSON.stringify({ type: "system", content: "消息格式错误，请发送 JSON", time: now() }));
+        ws.send(JSON.stringify({
+            type: "system",
+            content: "消息格式错误，请发送 JSON",
+            time: now(),
+        }));
         return;
     }
     switch (msg.type) {
