@@ -1,0 +1,21 @@
+{
+  "name": "simple-event-bus",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的简单事件总线库，基于 EventEmitter，支持通配符订阅、命名空间、优先级监听、异步监听、事件拦截取消、中间件、事件历史回放等。",
+  "main": "dist/index.js",
+  "bin": {
+    "simple-event-bus": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "event", "eventbus", "pubsub", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "genetic-algorithm-demo",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的遗传算法通用框架，含单词匹配/背包/TSP/函数最大化等演示。",
+  "main": "dist/index.js",
+  "bin": {
+    "genetic-algorithm": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "genetic-algorithm", "ai", "optimization"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

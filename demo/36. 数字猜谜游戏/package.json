@@ -1,0 +1,21 @@
+{
+  "name": "number-guessing-game",
+  "version": "1.0.0",
+  "description": "数字猜谜游戏，支持 easy/medium/hard 三档难度，分数、统计与本地排行榜",
+  "main": "dist/index.js",
+  "bin": {
+    "number-guessing-game": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "guessing", "cli", "stats"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

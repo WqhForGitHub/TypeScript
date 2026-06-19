@@ -1,0 +1,21 @@
+{
+  "name": "rock-paper-scissors",
+  "version": "1.0.0",
+  "description": "石头剪刀布，支持 play/best-of/tournament 多模式，多种 AI 策略，统计与历史",
+  "main": "dist/index.js",
+  "bin": {
+    "rock-paper-scissors": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "rps", "ai", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

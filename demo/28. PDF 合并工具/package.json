@@ -1,0 +1,21 @@
+{
+  "name": "pdf-merge-tool",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的 PDF 合并工具，解析 PDF 文件结构提取版本、页数、元数据，并通过对象重编号合并多个 PDF 或提取页面范围。",
+  "main": "dist/index.js",
+  "bin": {
+    "pdfmerge": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "pdf", "merge", "extract", "parser"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

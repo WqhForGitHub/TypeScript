@@ -1,0 +1,21 @@
+{
+  "name": "date-utils",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的日期时间工具库，提供格式化、解析、加减、差值、起止时间、比较、人化时间、不可变日期包装类等功能。",
+  "main": "dist/index.js",
+  "bin": {
+    "date-utils": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "date", "time", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

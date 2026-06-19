@@ -1,0 +1,19 @@
+{
+  "name": "todo-web-app",
+  "version": "1.0.0",
+  "description": "Todo Web 应用：完整 CRUD，HTML UI + REST API + JSON 持久化",
+  "main": "dist/index.js",
+  "bin": { "todo-web-app": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "todo", "web", "rest", "crud"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

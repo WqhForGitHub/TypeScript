@@ -1,0 +1,21 @@
+{
+  "name": "web-snapshot",
+  "version": "1.0.0",
+  "description": "简易网页截图工具，将网页渲染为文本快照（非像素截图），含元数据、链接列表、图片列表、响应头与计时，并支持对比与归档。",
+  "main": "dist/index.js",
+  "bin": {
+    "web-snapshot": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "snapshot", "webpage", "diff", "archive", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "pinyin-converter",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的汉字转拼音工具，内置常用字表与声调转换。",
+  "main": "dist/index.js",
+  "bin": {
+    "pinyin-converter": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "pinyin", "chinese", "nlp", "text"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

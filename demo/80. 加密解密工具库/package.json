@@ -1,0 +1,21 @@
+{
+  "name": "crypto-utils",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的加密解密工具库，基于 Node.js crypto 模块，提供哈希、HMAC、对称加密(AES)、RSA 签名验证、密码哈希、随机数、Base64/Hex 编解码、PBKDF2、常量时间比较等。",
+  "main": "dist/index.js",
+  "bin": {
+    "crypto-utils": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "crypto", "encrypt", "hash", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

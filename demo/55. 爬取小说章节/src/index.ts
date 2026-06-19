@@ -1,0 +1,459 @@
+#!/usr/bin/env node
+/**
+ * 55. 爬取小说章节
+ * ------------------------------------------------------------------
+ * 演示一个小说章节爬虫：
+ *   - 抓取目录页，提取章节链接
+ *   - 按章节范围抓取正文，支持限速、清理广告/脚本
+ *   - 支持命令：toc、fetch、download、search
+ *   - 网络失败时回退到内置演示小说
+ *
+ * 仅使用 Node.js 内置模块：fs、path、url、http、https、zlib、buffer。
+ */
+
+import * as fs from "fs";
+import * as path from "path";
+import * as url from "url";
+import * as http from "http";
+import * as https from "https";
+import * as zlib from "zlib";
+
+// ---------------------------------------------------------------------------
+// 类型定义
+// ---------------------------------------------------------------------------
+
+interface FetchOptions {
+  timeout?: number;
+  headers?: Record<string, string>;
+}
+
+interface ChapterLink {
+  title: string;
+  url: string;
+  index: number;
+}
+
+interface ChapterContent {
+  title: string;
+  url: string;
+  content: string;
+  index: number;
+  source: "live" | "demo";
+}
+
+// ---------------------------------------------------------------------------
+// HTTP 助手
+// ---------------------------------------------------------------------------
+
+const DEFAULT_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+function fetchText(rawUrl: string, opts: FetchOptions = {}): Promise<{ status: number; body: string; finalUrl: string }> {
+  const timeout = opts.timeout ?? 12000;
+  const headers: Record<string, string> = {
+    "User-Agent": DEFAULT_UA,
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    ...opts.headers,
+  };
+  return new Promise((resolve, reject) => {
+    let redirects = 0;
+    let currentUrl = rawUrl;
+    const attempt = (target: string): void => {
+      const parsed = url.parse(target);
+      const lib = parsed.protocol === "https:" ? https : http;
+      if (!parsed.hostname) { reject(new Error(`无效 URL: ${target}`)); return; }
+      const req = lib.request(
+        {
+          hostname: parsed.hostname,
+          port: parsed.port ? Number(parsed.port) : undefined,
+          path: parsed.path || "/",
+          method: "GET",
+          headers,
+        },
+        (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            if (redirects >= 5) { reject(new Error("重定向次数过多")); res.resume(); return; }
+            redirects++;
+            const next = url.resolve(target, res.headers.location);
+            res.resume();
+            currentUrl = next;
+            attempt(next);
+            return;
+          }
+          const chunks: Buffer[] = [];
+          const enc = (res.headers["content-encoding"] || "").toLowerCase();
+          let stream: NodeJS.ReadableStream = res;
+          if (enc === "gzip") stream = res.pipe(zlib.createGunzip());
+          else if (enc === "deflate") stream = res.pipe(zlib.createInflate());
+          else if (enc === "br") stream = res.pipe(zlib.createBrotliDecompress());
+          stream.on("data", (c: Buffer) => chunks.push(c));
+          stream.on("end", () => resolve({
+            status: res.statusCode || 200,
+            body: Buffer.concat(chunks).toString("utf8"),
+            finalUrl: currentUrl,
+          }));
+          stream.on("error", (err: Error) => reject(err));
+        }
+      );
+      req.setTimeout(timeout, () => req.destroy(new Error(`请求超时 (${timeout}ms)`)));
+      req.on("error", (err: Error) => reject(err));
+      req.end();
+    };
+    attempt(currentUrl);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 简易 HTML 提取器（用于目录与正文）
+// ---------------------------------------------------------------------------
+
+function stripTags(s: string): string {
+  return s
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** 提取页面中所有 <a> 链接 */
+function extractLinks(html: string, baseUrl: string): ChapterLink[] {
+  const out: ChapterLink[] = [];
+  const re = /<a\s+[^>]*?href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  let idx = 0;
+  while ((m = re.exec(html)) !== null) {
+    const href = m[1];
+    const text = stripTags(m[2]).trim();
+    if (!href || href.startsWith("javascript:") || href.startsWith("#")) continue;
+    if (!text || text.length < 2) continue;
+    const absolute = url.resolve(baseUrl, href);
+    out.push({ title: text, url: absolute, index: idx++ });
+  }
+  return out;
+}
+
+/** 提取正文：取最长文本块（常见小说站正文在 <div id="content"> 或 <div class="content">） */
+function extractContent(html: string, title: string): string {
+  // 1. 尝试常见正文容器
+  const patterns = [
+    /<div[^>]*id=["']?content["']?[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class=["']?[^"']*?content[^"']*?["']?[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*id=["']?chaptercontent["']?[^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class=["']?[^"']*?chapter[^"']*?["']?[^>]*>([\s\S]*?)<\/div>/i,
+  ];
+  for (const p of patterns) {
+    const m = p.exec(html);
+    if (m && m[1].length > 200) {
+      return stripTags(m[1]);
+    }
+  }
+  // 2. 兜底：取所有 <p>，拼接
+  const ps: string[] = [];
+  const re = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+  let mm: RegExpExecArray | null;
+  while ((mm = re.exec(html)) !== null) {
+    const t = stripTags(mm[1]).trim();
+    if (t.length > 20) ps.push(t);
+  }
+  if (ps.length > 0) return ps.join("\n\n");
+
+  // 3. 最终兜底：移除头部后取 body 文本
+  const bodyMatch = /<body[\s\S]*?>([\s\S]*?)<\/body>/i.exec(html);
+  if (bodyMatch) {
+    const t = stripTags(bodyMatch[1]);
+    return t.slice(0, 8000);
+  }
+  return `[无法解析正文] ${title}`;
+}
+
+/** 清洗正文：去广告/水印 */
+function cleanContent(text: string): string {
+  const adPatterns = [
+    /本章未完.*?点击下一页继续/gi,
+    /www\.[a-z0-9]+\.(com|net|org|cn)/gi,
+    /本章完/g,
+    /手机用户请浏览.*?阅读/gi,
+    /百度搜索.*?小说/gi,
+  ];
+  let out = text;
+  for (const p of adPatterns) out = out.replace(p, "");
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+// ---------------------------------------------------------------------------
+// 内置演示小说
+// ---------------------------------------------------------------------------
+
+const DEMO_NOVEL_TITLE = "演示小说·星空彼端";
+const DEMO_CHAPTERS: Array<{ title: string; content: string }> = [
+  {
+    title: "第一章 觉醒",
+    content: "凌晨三点，林舟从噩梦中惊醒。\n\n窗外的城市灯火稀疏，他擦了擦额头的冷汗，耳边似乎还回响着梦中那段低语。电子时钟的蓝光在墙壁上投射出模糊的数字，他坐起身，深吸了一口气。\n\n「又是这个梦……」\n\n他低声自语，伸手从床头柜拿起那枚古旧的怀表。怀表的指针在他指尖缓缓转动，发出极轻微的滴答声，仿佛在回应他的心跳。",
+  },
+  {
+    title: "第二章 信号",
+    content: "实验室里，监视器的曲线剧烈起伏。\n\n「林舟，你过来看这个。」导师指着屏幕上的一段波形，神情严肃，「这是昨晚从深空接收到的信号，频率非常规整，不像是自然现象。」\n\n林舟凑近屏幕，瞳孔骤然收缩。那段波形与他在梦中听到的低语节奏，完全一致。\n\n「这不可能是巧合。」他喃喃道。",
+  },
+  {
+    title: "第三章 决定",
+    content: "夜色更深了。\n\n林舟站在天台上，望着星空。怀表在他掌心微微发烫，仿佛有什么东西在召唤他。他想起导师白天的话，想起梦中那段低语，最终深吸一口气，做出了决定。\n\n「如果宇宙真的在呼唤我，」他轻声说，「那我就去回应它。」\n\n他转身下楼，开始收拾行装。",
+  },
+  {
+    title: "第四章 启程",
+    content: "列车穿过晨雾，向着北方疾驰。\n\n林舟靠在窗边，看着窗外飞速后退的田野。怀表被他小心地放在胸前口袋，隔着布料，他能感觉到它的温度。这是一段未知旅程的起点，他不知道终点在哪里，但内心却异常平静。\n\n「无论前方是什么，」他想，「我都不会退缩。」",
+  },
+  {
+    title: "第五章 抵达",
+    content: "北方的观测站隐藏在群山之间。\n\n林舟推开厚重的金属门，迎面是一个巨大的射电望远镜阵列。导师已经在门口等候，见到他，露出一丝复杂的神情。\n\n「你来了。」\n\n「我来了。」\n\n两人对视片刻，无需多言。他们都知道，从这一刻起，一切都将改变。",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// 命令实现
+// ---------------------------------------------------------------------------
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function cmdToc(targetUrl: string): Promise<void> {
+  console.log(`[toc] 抓取目录: ${targetUrl}`);
+  let links: ChapterLink[] = [];
+  try {
+    const res = await fetchText(targetUrl);
+    console.log(`[toc] HTTP ${res.status}, ${res.body.length} 字节`);
+    links = extractLinks(res.body, res.finalUrl).filter((l) => /第.*章|chapter|卷/.test(l.title) || /\d+/.test(l.title));
+    if (links.length === 0) {
+      // 兜底：全部链接
+      links = extractLinks(res.body, res.finalUrl);
+    }
+    console.log(`[toc] 解析到 ${links.length} 个章节链接（数据来源: 实时）`);
+  } catch (err) {
+    console.log(`[toc] 实时抓取失败: ${(err as Error).message}`);
+    console.log("[toc] 回退到演示小说目录。");
+    links = DEMO_CHAPTERS.map((c, i) => ({ title: c.title, url: `demo://${i}`, index: i }));
+  }
+  console.log("");
+  console.log(`  《${DEMO_NOVEL_TITLE}》  共 ${links.length} 章`);
+  console.log("  " + "─".repeat(60));
+  links.slice(0, 50).forEach((l) => {
+    console.log(`  ${String(l.index + 1).padStart(4, " ")}. ${l.title}`);
+  });
+  if (links.length > 50) console.log(`  ... 还有 ${links.length - 50} 章未显示`);
+  console.log("");
+}
+
+async function cmdFetch(targetUrl: string, start: number, end: number, outDir: string, delayMs: number): Promise<void> {
+  console.log(`[fetch] ${targetUrl}  章节 ${start}-${end}  输出: ${outDir}  限速: ${delayMs}ms`);
+  let links: ChapterLink[] = [];
+  let useDemo = false;
+  try {
+    const res = await fetchText(targetUrl);
+    links = extractLinks(res.body, res.finalUrl);
+    if (links.length === 0) throw new Error("未解析到章节链接");
+    console.log(`[fetch] 解析到 ${links.length} 个章节`);
+  } catch (err) {
+    console.log(`[fetch] 实时抓取失败: ${(err as Error).message}，使用演示小说。`);
+    useDemo = true;
+    links = DEMO_CHAPTERS.map((c, i) => ({ title: c.title, url: `demo://${i}`, index: i }));
+  }
+
+  const absOut = path.resolve(process.cwd(), outDir);
+  if (!fs.existsSync(absOut)) fs.mkdirSync(absOut, { recursive: true });
+
+  const s = Math.max(1, start) - 1;
+  const e = Math.min(links.length, end);
+  for (let i = s; i < e; i++) {
+    const link = links[i];
+    let content: string;
+    let src: "live" | "demo" = "live";
+    if (useDemo || link.url.startsWith("demo://")) {
+      const idx = parseInt(link.url.replace("demo://", ""), 10) || i;
+      content = DEMO_CHAPTERS[idx]?.content || "(无内容)";
+      src = "demo";
+    } else {
+      try {
+        const res = await fetchText(link.url);
+        content = cleanContent(extractContent(res.body, link.title));
+        console.log(`[fetch] (${i + 1}/${e}) ✓ ${link.title}  [${content.length}字]`);
+      } catch (err) {
+        content = `[抓取失败] ${(err as Error).message}`;
+        console.log(`[fetch] (${i + 1}/${e}) ✗ ${link.title}  失败: ${(err as Error).message}`);
+      }
+      if (delayMs > 0) await sleep(delayMs);
+    }
+    const safeTitle = link.title.replace(/[\\/:*?"<>|]/g, "_");
+    const file = path.join(absOut, `${String(i + 1).padStart(4, "0")}_${safeTitle}.txt`);
+    fs.writeFileSync(file, `${link.title}\n\n${content}\n`, "utf8");
+    void src;
+  }
+  console.log(`\n[fetch] 完成，文件保存于: ${absOut}`);
+}
+
+async function cmdDownload(targetUrl: string, delayMs: number): Promise<void> {
+  console.log(`[download] 抓取整本小说: ${targetUrl}`);
+  let links: ChapterLink[] = [];
+  let useDemo = false;
+  try {
+    const res = await fetchText(targetUrl);
+    links = extractLinks(res.body, res.finalUrl);
+    if (links.length === 0) throw new Error("未解析到章节链接");
+  } catch (err) {
+    console.log(`[download] 实时失败: ${(err as Error).message}，使用演示小说。`);
+    useDemo = true;
+    links = DEMO_CHAPTERS.map((c, i) => ({ title: c.title, url: `demo://${i}`, index: i }));
+  }
+
+  const parts: string[] = [];
+  parts.push(`《${DEMO_NOVEL_TITLE}》\n共 ${links.length} 章  抓取时间: ${new Date().toISOString()}\n${"=".repeat(60)}\n\n`);
+
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    let content: string;
+    if (useDemo || link.url.startsWith("demo://")) {
+      const idx = parseInt(link.url.replace("demo://", ""), 10) || i;
+      content = DEMO_CHAPTERS[idx]?.content || "(无内容)";
+    } else {
+      try {
+        const res = await fetchText(link.url);
+        content = cleanContent(extractContent(res.body, link.title));
+        console.log(`[download] (${i + 1}/${links.length}) ✓ ${link.title}`);
+      } catch (err) {
+        content = `[抓取失败] ${(err as Error).message}`;
+        console.log(`[download] (${i + 1}/${links.length}) ✗ ${link.title}`);
+      }
+      if (delayMs > 0 && i < links.length - 1) await sleep(delayMs);
+    }
+    parts.push(`${link.title}\n\n${content}\n\n${"-".repeat(60)}\n\n`);
+  }
+
+  const outDir = path.resolve(process.cwd(), "output");
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const file = path.join(outDir, `${DEMO_NOVEL_TITLE}.txt`);
+  fs.writeFileSync(file, parts.join(""), "utf8");
+  console.log(`\n[download] 完成，整本小说保存于: ${file}`);
+}
+
+async function cmdSearch(site: string, keyword: string): Promise<void> {
+  console.log(`[search] 站点: ${site}  关键词: ${keyword}`);
+  // 演示用：构造一个搜索 URL 并尝试解析结果
+  const searchUrl = `${site}/search?q=${encodeURIComponent(keyword)}`;
+  try {
+    const res = await fetchText(searchUrl, { timeout: 10000 });
+    const links = extractLinks(res.body, res.finalUrl).filter(
+      (l) => l.title.includes(keyword) || l.url.includes(keyword)
+    );
+    if (links.length === 0) {
+      console.log("[search] 未找到匹配结果（或站点不可访问）。");
+      return;
+    }
+    console.log(`[search] 找到 ${links.length} 条结果：`);
+    links.slice(0, 20).forEach((l, i) => {
+      console.log(`  ${i + 1}. ${l.title}\n     ${l.url}`);
+    });
+  } catch (err) {
+    console.log(`[search] 搜索失败: ${(err as Error).message}`);
+    console.log("[search] 提示：本命令仅演示搜索请求构造与解析技术。");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 入口
+// ---------------------------------------------------------------------------
+
+function printHelp(): void {
+  console.log(`
+小说章节爬虫 - 用法:
+  node dist/index.js toc <url>                          抓取目录页
+  node dist/index.js fetch <url> [-s start] [-e end]    抓取指定章节范围
+                         [-o outdir] [--delay ms]
+  node dist/index.js download <url> [--delay ms]        下载整本到单个 .txt
+  node dist/index.js search <site> <keyword>            搜索小说
+  node dist/index.js help                               显示本帮助
+
+选项:
+  -s, --start <n>     起始章节（默认 1）
+  -e, --end <n>       结束章节（默认 10）
+  -o, --out <dir>     输出目录（默认 ./output/chapters）
+  --delay <ms>        每章请求间隔（默认 800ms，限速）
+
+说明:
+  - 优先实时抓取；失败时回退到内置演示小说。
+  - 自动清理常见广告/水印文本。
+`);
+}
+
+function parseFlags(args: string[]): { positional: string[]; flags: Record<string, string> } {
+  const positional: string[] = [];
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-s" || a === "--start") flags.start = args[++i];
+    else if (a === "-e" || a === "--end") flags.end = args[++i];
+    else if (a === "-o" || a === "--out") flags.out = args[++i];
+    else if (a === "--delay") flags.delay = args[++i];
+    else if (a.startsWith("--")) flags[a.slice(2)] = args[++i];
+    else positional.push(a);
+  }
+  return { positional, flags };
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  if (argv.length === 0 || argv[0] === "help" || argv[0] === "-h") {
+    printHelp();
+    return;
+  }
+  const cmd = argv[0];
+  const { positional, flags } = parseFlags(argv.slice(1));
+
+  try {
+    switch (cmd) {
+      case "toc":
+        if (!positional[0]) { console.log("请提供目录页 URL。"); return; }
+        await cmdToc(positional[0]);
+        break;
+      case "fetch": {
+        if (!positional[0]) { console.log("请提供目录页 URL。"); return; }
+        const start = parseInt(flags.start || "1", 10) || 1;
+        const end = parseInt(flags.end || "10", 10) || 10;
+        const out = flags.out || path.join("output", "chapters");
+        const delay = parseInt(flags.delay || "800", 10) || 800;
+        await cmdFetch(positional[0], start, end, out, delay);
+        break;
+      }
+      case "download": {
+        if (!positional[0]) { console.log("请提供目录页 URL。"); return; }
+        const delay = parseInt(flags.delay || "800", 10) || 800;
+        await cmdDownload(positional[0], delay);
+        break;
+      }
+      case "search":
+        if (!positional[0] || !positional[1]) { console.log("用法: search <site> <keyword>"); return; }
+        await cmdSearch(positional[0], positional[1]);
+        break;
+      default:
+        console.log(`未知命令: ${cmd}`);
+        printHelp();
+    }
+  } catch (err) {
+    console.error("运行出错:", (err as Error).message);
+    process.exit(1);
+  }
+}
+
+main();

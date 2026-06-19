@@ -1,0 +1,19 @@
+{
+  "name": "logging-tool",
+  "version": "1.0.0",
+  "description": "日志记录工具，支持多级别、多传输（控制台/文件/JSON）、格式化、按大小/日期轮转、过滤、搜索",
+  "main": "dist/index.js",
+  "bin": { "log-tool": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "log", "logger", "rotate", "transport"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

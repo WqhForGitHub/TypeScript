@@ -1,0 +1,21 @@
+{
+  "name": "net-latency",
+  "version": "1.0.0",
+  "description": "网络延迟测试工具演示，支持 TCP ping、HTTP ping、基本 traceroute（TTL）与下载测速，含颜色化统计。",
+  "main": "dist/index.js",
+  "bin": {
+    "net-latency": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "network", "latency", "ping", "traceroute", "speedtest", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

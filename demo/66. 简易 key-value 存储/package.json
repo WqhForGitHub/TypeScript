@@ -1,0 +1,19 @@
+{
+  "name": "kv-store",
+  "version": "1.0.0",
+  "description": "简易 key-value 存储，支持 TTL、命名空间、原子操作、前缀扫描、文件持久化",
+  "main": "dist/index.js",
+  "bin": { "kv": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "kv", "storage", "ttl", "cache"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

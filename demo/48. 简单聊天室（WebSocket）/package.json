@@ -1,0 +1,19 @@
+{
+  "name": "websocket-chat-room",
+  "version": "1.0.0",
+  "description": "WebSocket 聊天室：手动实现 WebSocket 协议 (握手/帧解析/掩码/分片)",
+  "main": "dist/index.js",
+  "bin": { "websocket-chat-room": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "websocket", "chat", "manual", "handshake"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

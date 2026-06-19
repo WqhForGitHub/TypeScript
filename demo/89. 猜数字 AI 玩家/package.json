@@ -1,0 +1,21 @@
+{
+  "name": "number-guessing-ai",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的猜数字 AI 玩家，含二分/随机/频率/贝叶斯/进化等多种策略。",
+  "main": "dist/index.js",
+  "bin": {
+    "guess-ai": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "ai", "game", "search", "bayesian"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

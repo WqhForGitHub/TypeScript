@@ -1,0 +1,21 @@
+{
+  "name": "text-snake",
+  "version": "1.0.0",
+  "description": "文字版贪吃蛇游戏，使用 readline 接收 WASD/方向键输入，渲染蛇身、食物，支持计分与重新开始",
+  "main": "dist/index.js",
+  "bin": {
+    "text-snake": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "snake", "cli", "readline"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

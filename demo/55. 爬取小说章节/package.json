@@ -1,0 +1,21 @@
+{
+  "name": "novel-crawler",
+  "version": "1.0.0",
+  "description": "小说章节爬虫演示，抓取目录与章节正文，支持限速、清洗广告脚本，失败时回退到内置演示小说。",
+  "main": "dist/index.js",
+  "bin": {
+    "novel-crawler": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "crawler", "novel", "scraper", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

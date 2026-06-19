@@ -1,0 +1,21 @@
+{
+  "name": "news-crawler",
+  "version": "1.0.0",
+  "description": "新闻网站爬虫演示，支持抓取文章标题、链接、摘要，并内置简易 HTML 解析器，网络失败时回退到演示数据。",
+  "main": "dist/index.js",
+  "bin": {
+    "news-crawler": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "crawler", "scraper", "news", "html-parser", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

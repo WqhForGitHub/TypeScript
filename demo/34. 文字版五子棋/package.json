@@ -1,0 +1,21 @@
+{
+  "name": "text-gomoku",
+  "version": "1.0.0",
+  "description": "文字版五子棋，15x15 棋盘，支持 pvp/pvc，AI 使用启发式评估与防守四三",
+  "main": "dist/index.js",
+  "bin": {
+    "text-gomoku": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "gomoku", "ai", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

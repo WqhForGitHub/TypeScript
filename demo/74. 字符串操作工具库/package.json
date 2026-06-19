@@ -1,0 +1,21 @@
+{
+  "name": "string-utils",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的字符串操作工具库，提供大小写转换、截断、填充、HTML 转义、slugify、模板插值、编辑距离、模糊匹配、掩码等大量字符串处理函数。",
+  "main": "dist/index.js",
+  "bin": {
+    "string-utils": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "string", "utils", "text"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

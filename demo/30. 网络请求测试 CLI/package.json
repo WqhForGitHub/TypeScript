@@ -1,0 +1,21 @@
+{
+  "name": "network-test-cli",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的网络请求测试 CLI，类似简易版 curl/HTTPie，支持 GET/POST/PUT/DELETE/HEAD/下载/Ping，显示状态、头部、正文与计时，并自动美化 JSON 响应。",
+  "main": "dist/index.js",
+  "bin": {
+    "nettest": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "http", "network", "curl", "httpie", "request"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

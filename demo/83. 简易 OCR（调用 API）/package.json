@@ -1,0 +1,21 @@
+{
+  "name": "simple-ocr-api",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的简易 OCR 工具，调用可配置的 HTTP OCR API，未配置时进入演示模式。",
+  "main": "dist/index.js",
+  "bin": {
+    "simple-ocr": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "ocr", "http", "api", "image"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

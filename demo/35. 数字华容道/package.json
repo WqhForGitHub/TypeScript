@@ -1,0 +1,21 @@
+{
+  "name": "number-sliding-puzzle",
+  "version": "1.00.0",
+  "description": "数字华容道 (15 拼图)，可配置尺寸、可洗牌、可自动 A* 求解，记录步数与用时",
+  "main": "dist/index.js",
+  "bin": {
+    "number-sliding-puzzle": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "puzzle", "astar", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

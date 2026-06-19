@@ -1,0 +1,21 @@
+{
+  "name": "file-size-stats",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的文件大小统计工具，递归扫描目录并统计总大小、文件数、按扩展名分组、最大文件、大小分布与目录树，支持监控变化。",
+  "main": "dist/index.js",
+  "bin": {
+    "fsize": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "file", "size", "stats", "disk", "analyze"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

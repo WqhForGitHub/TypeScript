@@ -1,0 +1,21 @@
+{
+  "name": "form-autofill",
+  "version": "1.0.0",
+  "description": "网页自动表单填写工具演示，解析 HTML 表单（action/method/input），按提供的数据提交，支持 GET/POST、URL 编码、基础 cookie jar。",
+  "main": "dist/index.js",
+  "bin": {
+    "form-autofill": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "form", "autofill", "http", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

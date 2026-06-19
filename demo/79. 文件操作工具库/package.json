@@ -1,0 +1,21 @@
+{
+  "name": "file-utils",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的文件操作工具库，提供 JSON 读写、行读写、CSV 读写、目录递归复制删除、文件哈希、walk 遍历、glob 匹配、原子写入、防抖监视等高级 fs 函数。",
+  "main": "dist/index.js",
+  "bin": {
+    "file-utils": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "file", "fs", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

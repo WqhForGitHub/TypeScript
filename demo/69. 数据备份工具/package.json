@@ -1,0 +1,19 @@
+{
+  "name": "data-backup",
+  "version": "1.0.0",
+  "description": "数据备份工具，支持全量/增量/差异备份，自定义归档格式，zlib 压缩，校验",
+  "main": "dist/index.js",
+  "bin": { "backup": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "backup", "archive", "incremental", "zlib"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

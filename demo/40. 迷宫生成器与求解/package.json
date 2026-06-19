@@ -1,0 +1,21 @@
+{
+  "name": "maze-generator-solver",
+  "version": "1.0.0",
+  "description": "迷宫生成器与求解器，支持递归回溯生成、BFS/DFS 求解、动画展示求解过程",
+  "main": "dist/index.js",
+  "bin": {
+    "maze-generator-solver": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "maze", "bfs", "dfs", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

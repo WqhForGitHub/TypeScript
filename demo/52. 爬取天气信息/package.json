@@ -1,0 +1,21 @@
+{
+  "name": "weather-crawler",
+  "version": "1.0.0",
+  "description": "天气信息爬虫演示，尝试从公开天气源抓取数据，失败时基于城市名哈希生成逼真模拟数据。",
+  "main": "dist/index.js",
+  "bin": {
+    "weather-crawler": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "crawler", "weather", "forecast", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "image-downloader",
+  "version": "1.0.0",
+  "description": "图片下载器演示，从网页提取图片 URL 并并发下载到本地，支持限流、去重、HTML 画廊生成与 robots.txt 基本检查。",
+  "main": "dist/index.js",
+  "bin": {
+    "image-downloader": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "crawler", "image", "downloader", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

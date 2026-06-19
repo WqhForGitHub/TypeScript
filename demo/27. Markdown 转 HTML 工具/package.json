@@ -1,0 +1,21 @@
+{
+  "name": "md-to-html",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的 Markdown 转 HTML 工具，支持标题、粗体、斜体、代码、链接、图片、列表、引用、分割线等语法，可单文件、批量与监视转换。",
+  "main": "dist/index.js",
+  "bin": {
+    "md2html": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "markdown", "html", "converter", "parser"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

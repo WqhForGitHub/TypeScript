@@ -1,0 +1,19 @@
+{
+  "name": "file-upload-service",
+  "version": "1.0.0",
+  "description": "文件上传服务：手动解析 multipart/form-data，支持多文件上传",
+  "main": "dist/index.js",
+  "bin": { "file-upload-service": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "upload", "multipart", "http"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

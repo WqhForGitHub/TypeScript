@@ -1,0 +1,21 @@
+{
+  "name": "text-tic-tac-toe",
+  "version": "1.0.0",
+  "description": "文字版井字棋，支持 pvp 玩家对战、pvc 人机对战 (minimax 最优 AI)、cvc AI 自战演示",
+  "main": "dist/index.js",
+  "bin": {
+    "text-tic-tac-toe": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "tic-tac-toe", "minimax", "ai"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

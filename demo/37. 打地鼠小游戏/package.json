@@ -1,0 +1,21 @@
+{
+  "name": "whack-a-mole",
+  "version": "1.0.0",
+  "description": "打地鼠小游戏，3x3 网格，60 秒倒计时，难度递增，记录分数与最高分",
+  "main": "dist/index.js",
+  "bin": {
+    "whack-a-mole": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "whack-a-mole", "cli", "timer"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

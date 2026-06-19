@@ -1,0 +1,21 @@
+{
+  "name": "stock-crawler",
+  "version": "1.0.0",
+  "description": "股票行情爬虫演示，尝试从公开免 key 接口抓取实时行情，失败时回退到模拟数据，支持彩色表格展示。",
+  "main": "dist/index.js",
+  "bin": {
+    "stock-crawler": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "crawler", "stock", "finance", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

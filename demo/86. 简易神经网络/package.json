@@ -1,0 +1,21 @@
+{
+  "name": "simple-neural-network",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 从零实现的简单前馈神经网络，含矩阵运算/激活/反向传播/小批量训练。",
+  "main": "dist/index.js",
+  "bin": {
+    "simple-nn": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "neural-network", "machine-learning", "ai"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

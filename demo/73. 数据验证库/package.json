@@ -1,0 +1,21 @@
+{
+  "name": "data-validator",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的模式化数据验证库，类似精简版 Joi/Zod，支持字符串、数字、布尔、日期、数组、对象、联合、字面量等类型，以及可空、可选、默认值、转换、自定义验证器等。",
+  "main": "dist/index.js",
+  "bin": {
+    "data-validator": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "validation", "schema", "validator", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

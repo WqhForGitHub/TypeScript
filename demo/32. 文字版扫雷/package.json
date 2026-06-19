@@ -1,0 +1,21 @@
+{
+  "name": "text-minesweeper",
+  "version": "1.0.0",
+  "description": "文字版扫雷游戏，支持 r 揭开、f 标记、c 和弦操作，首点保护，可配置棋盘大小与雷数",
+  "main": "dist/index.js",
+  "bin": {
+    "text-minesweeper": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "game", "minesweeper", "cli", "readline"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

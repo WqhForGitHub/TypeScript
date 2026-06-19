@@ -1,0 +1,21 @@
+{
+  "name": "simple-http-client",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的简易 HTTP 请求库，基于 Node.js 内置 http/https 模块封装，支持 Promise、拦截器、超时、重试、重定向、gzip 解压、流式响应等。",
+  "main": "dist/index.js",
+  "bin": {
+    "simple-http": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "http", "client", "request", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

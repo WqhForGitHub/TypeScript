@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/WqhForGitHub/TypeScript#readme",
   "devDependencies": {
+    "@types/node": "^20.19.43",
     "typescript": "^6.0.3"
   }
 }

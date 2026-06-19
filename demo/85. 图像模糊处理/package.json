@@ -1,0 +1,21 @@
+{
+  "name": "image-blur",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的图像模糊/卷积工具，支持 box/gaussian/motion/radial 模糊与锐化/边缘/浮雕。",
+  "main": "dist/index.js",
+  "bin": {
+    "image-blur": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "image", "blur", "convolution", "ppm", "bmp"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

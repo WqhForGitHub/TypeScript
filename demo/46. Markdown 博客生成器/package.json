@@ -1,0 +1,19 @@
+{
+  "name": "markdown-blog-generator",
+  "version": "1.0.0",
+  "description": "Markdown 博客生成器：将 .md (含 YAML frontmatter) 转为静态 HTML 博客站点",
+  "main": "dist/index.js",
+  "bin": { "markdown-blog-generator": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "markdown", "blog", "static-site-generator"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

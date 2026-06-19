@@ -1,0 +1,21 @@
+{
+  "name": "unit-converter",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的单元转换工具库，支持长度、质量、温度、面积、体积、时间、速度、数据、压力、能量、角度等类别的相互转换。",
+  "main": "dist/index.js",
+  "bin": {
+    "unit-converter": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "unit", "convert", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

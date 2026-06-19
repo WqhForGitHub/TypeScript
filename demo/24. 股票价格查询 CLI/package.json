@@ -1,0 +1,21 @@
+{
+  "name": "stock-price-cli",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的股票价格查询 CLI，基于股票代码哈希确定性生成模拟行情数据，支持实时报价、历史走势、涨跌排行与定时刷新。",
+  "main": "dist/index.js",
+  "bin": {
+    "stock": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "cli", "stock", "quote", "finance", "mock-data"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

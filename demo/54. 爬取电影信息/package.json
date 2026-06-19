@@ -1,0 +1,21 @@
+{
+  "name": "movie-crawler",
+  "version": "1.0.0",
+  "description": "电影信息爬虫演示，尝试从公开源抓取电影信息，失败时回退到内置电影数据库，支持搜索/榜单/详情查询。",
+  "main": "dist/index.js",
+  "bin": {
+    "movie-crawler": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "crawler", "movie", "scraper", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

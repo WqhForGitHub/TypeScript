@@ -1,0 +1,21 @@
+{
+  "name": "weibo-hot-crawler",
+  "version": "1.0.0",
+  "description": "微博热搜爬虫演示，尝试抓取 s.weibo.com/top/summary，失败时回退到模拟热搜数据，支持本地缓存、搜索与导出。",
+  "main": "dist/index.js",
+  "bin": {
+    "weibo-hot-crawler": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "crawler", "weibo", "hot-search", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

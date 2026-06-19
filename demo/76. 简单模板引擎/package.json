@@ -1,0 +1,21 @@
+{
+  "name": "template-engine",
+  "version": "1.0.0",
+  "description": "一个使用纯 TypeScript 编写的简单模板引擎，支持变量插值、条件判断、循环、partial、helper、注释、HTML 转义、嵌套访问、过滤器、自定义 helper 注册与预编译。",
+  "main": "dist/index.js",
+  "bin": {
+    "template-engine": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "library", "template", "engine", "render", "utils"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

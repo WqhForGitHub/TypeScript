@@ -1,0 +1,19 @@
+{
+  "name": "rss-reader",
+  "version": "1.0.0",
+  "description": "RSS 阅读器：订阅、抓取、解析 RSS 2.0 / Atom，标记已读，导出 OPML",
+  "main": "dist/index.js",
+  "bin": { "rss-reader": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "rss", "atom", "feed", "reader", "cli"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

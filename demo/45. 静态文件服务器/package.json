@@ -1,0 +1,19 @@
+{
+  "name": "static-file-server",
+  "version": "1.0.0",
+  "description": "静态文件服务器：支持 MIME、Range 请求、ETag、gzip、目录列表、路径安全",
+  "main": "dist/index.js",
+  "bin": { "static-file-server": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": ["typescript", "static", "file-server", "http", "gzip", "range"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
