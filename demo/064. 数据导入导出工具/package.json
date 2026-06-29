@@ -3,13 +3,22 @@
   "version": "1.0.0",
   "description": "数据导入导出工具，支持 JSON/CSV/TSV/表格格式互转、合并、拆分、校验、类型推断",
   "main": "dist/index.js",
-  "bin": { "data-io": "dist/index.js" },
+  "bin": {
+    "data-io": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "data", "csv", "json", "tsv", "convert"],
+  "keywords": [
+    "typescript",
+    "data",
+    "csv",
+    "json",
+    "tsv",
+    "convert"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

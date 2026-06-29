@@ -74,15 +74,15 @@ node dist/index.js --help
 
 ## 核心实现说明
 
-| 函数 | 作用 |
-| ---- | ---- |
-| `isLeapYear(year)` | 判断闰年（4 整除且非 100，或 400 整除） |
-| `getDaysInMonth(year, month)` | 获取指定月的天数 |
-| `getFirstWeekday(year, month)` | 获取该月 1 号是周几 |
-| `buildMonthMatrix(year, month)` | 构建按周分行的二维日历表 |
-| `renderMonth(year, month)` | 渲染单个月份为字符串 |
-| `renderYear(year)` | 渲染整年日历 |
-| `parseArgs(argv)` | 解析并校验命令行参数 |
+| 函数                            | 作用                                    |
+| ------------------------------- | --------------------------------------- |
+| `isLeapYear(year)`              | 判断闰年（4 整除且非 100，或 400 整除） |
+| `getDaysInMonth(year, month)`   | 获取指定月的天数                        |
+| `getFirstWeekday(year, month)`  | 获取该月 1 号是周几                     |
+| `buildMonthMatrix(year, month)` | 构建按周分行的二维日历表                |
+| `renderMonth(year, month)`      | 渲染单个月份为字符串                    |
+| `renderYear(year)`              | 渲染整年日历                            |
+| `parseArgs(argv)`               | 解析并校验命令行参数                    |
 
 ## License
 

@@ -3,13 +3,21 @@
   "version": "1.0.0",
   "description": "CSV 转 JSON 工具，支持带引号字段、转义引号、嵌入换行、自定义分隔符、类型推断、流式处理",
   "main": "dist/index.js",
-  "bin": { "csv2json": "dist/index.js" },
+  "bin": {
+    "csv2json": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "csv", "json", "parser", "stream"],
+  "keywords": [
+    "typescript",
+    "csv",
+    "json",
+    "parser",
+    "stream"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

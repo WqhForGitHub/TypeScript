@@ -1,12 +1,8 @@
 #!/usr/bin/env node
 /**
  * 数据加密存储
- * - 使用 Node.js crypto：AES-256-GCM 对称加密
- * - 密钥通过 scrypt 从口令派生（salt + 口令 -> 32 字节密钥）
- * - 存储格式：salt(16) + iv(12) + ciphertext + authTag(16)
- * - 加密 KV 存储：set / get / del / keys
- * - 命令：init / set / get / del / keys / export / import / rekey
- * - 操作前验证口令（尝试解密校验数据）
+ * - AES-256-GCM 对称加密，scrypt 密钥派生
+ * - 加密 KV 存储：init / unlock / set / get / del / keys / export / import / rekey
  *
  * 仅使用 Node.js 内置模块。
  */
@@ -15,58 +11,258 @@ import * as path from "path";
 import * as crypto from "crypto";
 import * as readline from "readline";
 
-const SALT_LEN = 16;
-const IV_LEN = 12;
-const KEY_LEN = 32; // AES-256
-const AUTH_TAG_LEN = 16;
-const SCRYPT_N = 16384; // CPU/内存代价
-const SCRYPT_R = 8;
-const SCRYPT_P = 1;
-const MAGIC = Buffer.from("TVLT"); // TypeScript VauLT
+/* ===================== Enums ===================== */
 
-/** 单个加密条目的存储格式 */
-interface StoredItem {
-  salt: string; // base64
-  iv: string; // base64
-  ct: string; // base64 密文
-  tag: string; // base64 authTag
+enum Command {
+  Init = "init",
+  Set = "set",
+  Get = "get",
+  Del = "del",
+  Keys = "keys",
+  Export = "export",
+  Import = "import",
+  Rekey = "rekey",
+  Stats = "stats",
+  Demo = "demo",
 }
 
-/** 整个 vault 文件 */
+enum ErrorCode {
+  NotInitialized = "NOT_INITIALIZED",
+  AlreadyInitialized = "ALREADY_INITIALIZED",
+  AuthFailed = "AUTH_FAILED",
+  DecryptFailed = "DECRYPT_FAILED",
+  WeakPassphrase = "WEAK_PASSPHRASE",
+  IoError = "IO_ERROR",
+  UnknownCommand = "UNKNOWN_COMMAND",
+}
+
+enum VaultState {
+  Locked = "locked",
+  Unlocked = "unlocked",
+}
+
+enum CryptoAlgorithm {
+  Aes256Gcm = "aes-256-gcm",
+}
+
+enum KeyDerivation {
+  Scrypt = "scrypt",
+}
+
+/* ===================== Types ===================== */
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+interface StoredItem {
+  readonly salt: string;
+  readonly iv: string;
+  readonly ct: string;
+  readonly tag: string;
+}
+
 interface VaultFile {
-  version: number;
-  // 用于校验口令：存一个固定明文 "VAULT_OK" 的加密结果
-  verifier: StoredItem;
+  readonly version: number;
+  readonly algo: CryptoAlgorithm;
+  readonly kdf: KeyDerivation;
+  readonly verifier: StoredItem;
   items: Record<string, StoredItem>;
 }
 
-/** 从口令派生密钥 */
+interface Identifiable {
+  readonly id: string;
+}
+
+interface VaultStats {
+  readonly count: number;
+  readonly fileBytes: number;
+  readonly state: VaultState;
+}
+
+type OpResult<T> =
+  | { readonly kind: "success"; readonly value: T }
+  | {
+      readonly kind: "error";
+      readonly code: ErrorCode;
+      readonly message: string;
+    }
+  | { readonly kind: "notfound"; readonly key: string };
+
+const VAULT_OK_PLAINTEXT = "VAULT_OK";
+
+const CRYPTO_PARAMS = {
+  saltLen: 16,
+  ivLen: 12,
+  keyLen: 32,
+  authTagLen: 16,
+  scryptN: 16384,
+  scryptR: 8,
+  scryptP: 1,
+  maxmem: 64 * 1024 * 1024,
+} as const;
+
+const MAGIC = Buffer.from("TVLT", "utf8");
+const VAULT_VERSION = 1 as const;
+
+/* ===================== Symbols ===================== */
+
+const SYM_META: unique symbol = Symbol("meta");
+const SYM_BRAND: unique symbol = Symbol("vaultBrand");
+
+interface MetaInfo {
+  readonly createdAt: number;
+  modifiedAt: number;
+}
+
+/* ===================== Error Hierarchy ===================== */
+
+class VaultError extends Error {
+  readonly code: ErrorCode;
+  constructor(code: ErrorCode, message: string) {
+    super(message);
+    this.name = "VaultError";
+    this.code = code;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+class AuthError extends VaultError {
+  constructor(msg: string) {
+    super(ErrorCode.AuthFailed, msg);
+    this.name = "AuthError";
+  }
+}
+class CryptoError extends VaultError {
+  constructor(msg: string) {
+    super(ErrorCode.DecryptFailed, msg);
+    this.name = "CryptoError";
+  }
+}
+
+/* ===================== Type Guards ===================== */
+
+function isOpSuccess<T>(r: OpResult<T>): r is { kind: "success"; value: T } {
+  return r.kind === "success";
+}
+function isOpError<T>(
+  r: OpResult<T>,
+): r is { kind: "error"; code: ErrorCode; message: string } {
+  return r.kind === "error";
+}
+function isStoredItem(v: unknown): v is StoredItem {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.salt === "string" &&
+    typeof o.iv === "string" &&
+    typeof o.ct === "string" &&
+    typeof o.tag === "string"
+  );
+}
+
+/* ===================== Abstract Crypto Provider ===================== */
+
+abstract class AbstractCryptoProvider {
+  readonly algorithm: CryptoAlgorithm;
+  protected constructor(algo: CryptoAlgorithm) {
+    this.algorithm = algo;
+  }
+  abstract encrypt(
+    key: Buffer,
+    plaintext: Buffer,
+  ): { iv: Buffer; ct: Buffer; tag: Buffer };
+  abstract decrypt(key: Buffer, iv: Buffer, ct: Buffer, tag: Buffer): Buffer;
+}
+
+class AesGcmProvider extends AbstractCryptoProvider {
+  constructor() {
+    super(CryptoAlgorithm.Aes256Gcm);
+  }
+  encrypt(
+    key: Buffer,
+    plaintext: Buffer,
+  ): { iv: Buffer; ct: Buffer; tag: Buffer } {
+    const iv = crypto.randomBytes(CRYPTO_PARAMS.ivLen);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    return { iv, ct, tag: cipher.getAuthTag() };
+  }
+  decrypt(key: Buffer, iv: Buffer, ct: Buffer, tag: Buffer): Buffer {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]);
+  }
+}
+
+/* ===================== Generic Vault Store ===================== */
+
+class VaultStore<T extends StoredItem> implements Iterable<T> {
+  private items = new Map<string, T>();
+  private readonly [SYM_META]: MetaInfo = {
+    createdAt: Date.now(),
+    modifiedAt: Date.now(),
+  };
+  constructor() {}
+  get count(): number {
+    return this.items.size;
+  }
+  set(key: string, item: T): void {
+    this.items.set(key, item);
+    this.touch();
+  }
+  get(key: string): T | undefined {
+    return this.items.get(key);
+  }
+  delete(key: string): boolean {
+    const r = this.items.delete(key);
+    if (r) this.touch();
+    return r;
+  }
+  keys(): string[] {
+    return Array.from(this.items.keys());
+  }
+  has(key: string): boolean {
+    return this.items.has(key);
+  }
+  clear(): void {
+    this.items.clear();
+    this.touch();
+  }
+  private touch(): void {
+    this[SYM_META].modifiedAt = Date.now();
+  }
+  *[Symbol.iterator](): Iterator<T> {
+    for (const v of this.items.values()) yield v;
+  }
+  *entries(): IterableIterator<[string, T]> {
+    for (const e of this.items.entries()) yield e;
+  }
+  toRecord(): Record<string, T> {
+    return Object.fromEntries(this.items.entries());
+  }
+  loadRecord(rec: Record<string, T>): void {
+    for (const [k, v] of Object.entries(rec)) this.items.set(k, v);
+  }
+}
+
+/* ===================== Helpers ===================== */
+
 function deriveKey(passphrase: string, salt: Buffer): Buffer {
-  return crypto.scryptSync(Buffer.from(passphrase, "utf8"), salt, KEY_LEN, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
-    maxmem: 64 * 1024 * 1024,
-  });
+  return crypto.scryptSync(
+    Buffer.from(passphrase, "utf8"),
+    salt,
+    CRYPTO_PARAMS.keyLen,
+    {
+      N: CRYPTO_PARAMS.scryptN,
+      r: CRYPTO_PARAMS.scryptR,
+      p: CRYPTO_PARAMS.scryptP,
+      maxmem: CRYPTO_PARAMS.maxmem,
+    },
+  );
 }
 
-/** AES-256-GCM 加密 */
-function encrypt(key: Buffer, plaintext: Buffer): { iv: Buffer; ct: Buffer; tag: Buffer } {
-  const iv = crypto.randomBytes(IV_LEN);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return { iv, ct, tag };
-}
-
-/** AES-256-GCM 解密 */
-function decrypt(key: Buffer, iv: Buffer, ct: Buffer, tag: Buffer): Buffer {
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]);
-}
-
-function toStored(salt: Buffer, e: { iv: Buffer; ct: Buffer; tag: Buffer }): StoredItem {
+function toStored(
+  salt: Buffer,
+  e: { iv: Buffer; ct: Buffer; tag: Buffer },
+): StoredItem {
   return {
     salt: salt.toString("base64"),
     iv: e.iv.toString("base64"),
@@ -75,7 +271,12 @@ function toStored(salt: Buffer, e: { iv: Buffer; ct: Buffer; tag: Buffer }): Sto
   };
 }
 
-function fromStored(item: StoredItem): { salt: Buffer; iv: Buffer; ct: Buffer; tag: Buffer } {
+function fromStored(item: StoredItem): {
+  salt: Buffer;
+  iv: Buffer;
+  ct: Buffer;
+  tag: Buffer;
+} {
   return {
     salt: Buffer.from(item.salt, "base64"),
     iv: Buffer.from(item.iv, "base64"),
@@ -84,32 +285,51 @@ function fromStored(item: StoredItem): { salt: Buffer; iv: Buffer; ct: Buffer; t
   };
 }
 
-/** 加密存储主类 */
-export class EncryptedStore {
+/* ===================== Encrypted Store ===================== */
+
+class EncryptedStore {
   private file: string;
   private passphrase: string | null = null;
   private vault: VaultFile | null = null;
+  private provider: AbstractCryptoProvider = new AesGcmProvider();
+  private readonly [SYM_BRAND] = true;
 
   constructor(file: string) {
     this.file = path.resolve(file);
   }
 
-  /** 是否已初始化 */
+  get state(): VaultState {
+    return this.passphrase !== null && this.vault !== null
+      ? VaultState.Unlocked
+      : VaultState.Locked;
+  }
+  get filePath(): string {
+    return this.file;
+  }
+
   isInitialized(): boolean {
     return fs.existsSync(this.file);
   }
 
-  /** 初始化 vault（设置口令） */
   init(passphrase: string): void {
-    if (this.isInitialized()) throw new Error("存储已初始化，请使用 rekey 修改口令");
-    if (passphrase.length < 6) throw new Error("口令至少 6 个字符");
+    if (this.isInitialized())
+      throw new VaultError(
+        ErrorCode.AlreadyInitialized,
+        "存储已初始化，请使用 rekey 修改口令",
+      );
+    if (passphrase.length < 6)
+      throw new VaultError(ErrorCode.WeakPassphrase, "口令至少 6 个字符");
     this.passphrase = passphrase;
-    const salt = crypto.randomBytes(SALT_LEN);
+    const salt = crypto.randomBytes(CRYPTO_PARAMS.saltLen);
     const key = deriveKey(passphrase, salt);
-    // 创建校验器
-    const verifierEnc = encrypt(key, Buffer.from("VAULT_OK", "utf8"));
+    const verifierEnc = this.provider.encrypt(
+      key,
+      Buffer.from(VAULT_OK_PLAINTEXT, "utf8"),
+    );
     const vault: VaultFile = {
-      version: 1,
+      version: VAULT_VERSION,
+      algo: CryptoAlgorithm.Aes256Gcm,
+      kdf: KeyDerivation.Scrypt,
       verifier: toStored(salt, verifierEnc),
       items: {},
     };
@@ -117,26 +337,15 @@ export class EncryptedStore {
     this.save();
   }
 
-  /** 解锁：验证口令并加载 */
   unlock(passphrase: string): boolean {
-    if (!this.isInitialized()) throw new Error("存储未初始化");
-    const raw = fs.readFileSync(this.file, "utf8");
-    let parsed: VaultFile;
-    try {
-      parsed = JSON.parse(raw) as VaultFile;
-    } catch {
-      // 也许是旧格式：MAGIC + JSON
-      const buf = fs.readFileSync(this.file);
-      if (buf.length < MAGIC.length || buf.slice(0, MAGIC.length).toString() !== MAGIC.toString()) {
-        throw new Error("存储文件损坏");
-      }
-      parsed = JSON.parse(buf.slice(MAGIC.length).toString("utf8")) as VaultFile;
-    }
+    if (!this.isInitialized())
+      throw new VaultError(ErrorCode.NotInitialized, "存储未初始化");
+    const parsed = this.readVault();
     const v = fromStored(parsed.verifier);
     const key = deriveKey(passphrase, v.salt);
     try {
-      const pt = decrypt(key, v.iv, v.ct, v.tag);
-      if (pt.toString("utf8") !== "VAULT_OK") return false;
+      const pt = this.provider.decrypt(key, v.iv, v.ct, v.tag);
+      if (pt.toString("utf8") !== VAULT_OK_PLAINTEXT) return false;
     } catch {
       return false;
     }
@@ -145,23 +354,36 @@ export class EncryptedStore {
     return true;
   }
 
-  /** 确保已解锁 */
-  private ensureUnlocked(): void {
-    if (!this.passphrase || !this.vault) throw new Error("存储未解锁，请先 unlock");
+  private readVault(): VaultFile {
+    const raw = fs.readFileSync(this.file, "utf8");
+    try {
+      return JSON.parse(raw) as VaultFile;
+    } catch {
+      const buf = fs.readFileSync(this.file);
+      if (
+        buf.length < MAGIC.length ||
+        buf.slice(0, MAGIC.length).toString() !== MAGIC.toString()
+      )
+        throw new VaultError(ErrorCode.IoError, "存储文件损坏");
+      return JSON.parse(buf.slice(MAGIC.length).toString("utf8")) as VaultFile;
+    }
   }
 
-  /** 设置键值 */
+  private ensureUnlocked(): void {
+    if (!this.passphrase || !this.vault)
+      throw new VaultError(ErrorCode.NotInitialized, "存储未解锁，请先 unlock");
+  }
+
   set(key: string, value: unknown): void {
     this.ensureUnlocked();
-    const salt = crypto.randomBytes(SALT_LEN);
+    const salt = crypto.randomBytes(CRYPTO_PARAMS.saltLen);
     const dk = deriveKey(this.passphrase!, salt);
     const plaintext = Buffer.from(JSON.stringify(value), "utf8");
-    const enc = encrypt(dk, plaintext);
+    const enc = this.provider.encrypt(dk, plaintext);
     this.vault!.items[key] = toStored(salt, enc);
     this.save();
   }
 
-  /** 获取键值 */
   get<T = unknown>(key: string): T | null {
     this.ensureUnlocked();
     const item = this.vault!.items[key];
@@ -169,14 +391,27 @@ export class EncryptedStore {
     const v = fromStored(item);
     const dk = deriveKey(this.passphrase!, v.salt);
     try {
-      const pt = decrypt(dk, v.iv, v.ct, v.tag);
+      const pt = this.provider.decrypt(dk, v.iv, v.ct, v.tag);
       return JSON.parse(pt.toString("utf8")) as T;
     } catch {
-      throw new Error(`解密失败: ${key}（数据可能被篡改）`);
+      throw new CryptoError(`解密失败: ${key}（数据可能被篡改）`);
     }
   }
 
-  /** 删除键 */
+  tryGet<T = unknown>(key: string): OpResult<T> {
+    try {
+      const v = this.get<T>(key);
+      if (v === null) return { kind: "notfound", key };
+      return { kind: "success", value: v };
+    } catch (e) {
+      return {
+        kind: "error",
+        code: ErrorCode.DecryptFailed,
+        message: (e as Error).message,
+      };
+    }
+  }
+
   del(key: string): boolean {
     this.ensureUnlocked();
     if (!this.vault!.items[key]) return false;
@@ -185,28 +420,28 @@ export class EncryptedStore {
     return true;
   }
 
-  /** 列出键 */
   keys(): string[] {
     this.ensureUnlocked();
     return Object.keys(this.vault!.items);
   }
 
-  /** 修改口令（重新加密所有条目） */
   rekey(newPassphrase: string): void {
     this.ensureUnlocked();
-    if (newPassphrase.length < 6) throw new Error("口令至少 6 个字符");
-    // 先解密所有明文
+    if (newPassphrase.length < 6)
+      throw new VaultError(ErrorCode.WeakPassphrase, "口令至少 6 个字符");
     const plain: Record<string, unknown> = {};
-    for (const k of Object.keys(this.vault!.items)) {
-      plain[k] = this.get(k);
-    }
-    // 用新口令重建
+    for (const k of Object.keys(this.vault!.items)) plain[k] = this.get(k);
     this.passphrase = newPassphrase;
-    const salt = crypto.randomBytes(SALT_LEN);
+    const salt = crypto.randomBytes(CRYPTO_PARAMS.saltLen);
     const dk = deriveKey(newPassphrase, salt);
-    const verifierEnc = encrypt(dk, Buffer.from("VAULT_OK", "utf8"));
+    const verifierEnc = this.provider.encrypt(
+      dk,
+      Buffer.from(VAULT_OK_PLAINTEXT, "utf8"),
+    );
     const vault: VaultFile = {
-      version: 1,
+      version: VAULT_VERSION,
+      algo: CryptoAlgorithm.Aes256Gcm,
+      kdf: KeyDerivation.Scrypt,
       verifier: toStored(salt, verifierEnc),
       items: {},
     };
@@ -215,36 +450,36 @@ export class EncryptedStore {
     this.save();
   }
 
-  /** 导出（加密导出文件，独立口令可选） */
-  exportToFile(outFile: string, exportPassphrase?: string): void {
+  exportToFile(outFile: string): void {
     this.ensureUnlocked();
-    // 把当前 vault 原样写出（已经是加密的）
     const data = JSON.stringify(this.vault, null, 2);
     const buf = Buffer.concat([MAGIC, Buffer.from(data, "utf8")]);
     fs.writeFileSync(path.resolve(outFile), buf);
-    void exportPassphrase;
   }
 
-  /** 导入（合并条目，需用同一口令） */
   importFromFile(inFile: string): number {
     this.ensureUnlocked();
     const buf = fs.readFileSync(path.resolve(inFile));
     let parsed: VaultFile;
-    if (buf.length >= MAGIC.length && buf.slice(0, MAGIC.length).toString() === MAGIC.toString()) {
-      parsed = JSON.parse(buf.slice(MAGIC.length).toString("utf8")) as VaultFile;
+    if (
+      buf.length >= MAGIC.length &&
+      buf.slice(0, MAGIC.length).toString() === MAGIC.toString()
+    ) {
+      parsed = JSON.parse(
+        buf.slice(MAGIC.length).toString("utf8"),
+      ) as VaultFile;
     } else {
       parsed = JSON.parse(buf.toString("utf8")) as VaultFile;
     }
-    // 校验导入文件的口令是否一致（用当前口令尝试解密 verifier）
     const v = fromStored(parsed.verifier);
     const dk = deriveKey(this.passphrase!, v.salt);
     try {
-      const pt = decrypt(dk, v.iv, v.ct, v.tag);
-      if (pt.toString("utf8") !== "VAULT_OK") {
-        throw new Error("导入文件的口令与当前口令不一致");
-      }
+      const pt = this.provider.decrypt(dk, v.iv, v.ct, v.tag);
+      if (pt.toString("utf8") !== VAULT_OK_PLAINTEXT)
+        throw new AuthError("导入文件的口令与当前口令不一致");
     } catch (e) {
-      throw new Error(`无法解密导入文件: ${(e as Error).message}`);
+      if (e instanceof AuthError) throw e;
+      throw new AuthError(`无法解密导入文件: ${(e as Error).message}`);
     }
     let count = 0;
     for (const k of Object.keys(parsed.items)) {
@@ -263,29 +498,34 @@ export class EncryptedStore {
     fs.renameSync(tmp, this.file);
   }
 
-  /** 锁定（清除内存中的口令） */
   lock(): void {
     this.passphrase = null;
     this.vault = null;
   }
 
-  /** 统计 */
-  stats(): { count: number; fileBytes: number } {
-    const count = this.vault ? Object.keys(this.vault.items).length : 0;
-    let fileBytes = 0;
-    if (fs.existsSync(this.file)) fileBytes = fs.statSync(this.file).size;
-    return { count, fileBytes };
+  stats(): VaultStats {
+    return {
+      count: this.vault ? Object.keys(this.vault.items).length : 0,
+      fileBytes: fs.existsSync(this.file) ? fs.statSync(this.file).size : 0,
+      state: this.state,
+    };
+  }
+
+  *iterateItems(): IterableIterator<[string, StoredItem]> {
+    this.ensureUnlocked();
+    for (const entry of Object.entries(this.vault!.items)) yield entry;
   }
 }
 
-/* ----------------------- 口令输入 ----------------------- */
+/* ===================== Password Prompt ===================== */
 
 function promptPassword(prompt: string): Promise<string> {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    // 在 stdout 隐藏输入（简易实现：覆盖 _writeToOutput）
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
     const stdin = process.stdin;
-    const wasRaw = stdin.isTTY;
     let data = "";
     process.stdout.write(prompt);
     const onData = (ch: Buffer) => {
@@ -293,14 +533,12 @@ function promptPassword(prompt: string): Promise<string> {
       if (c === "\r" || c === "\n") {
         process.stdout.write("\n");
         stdin.removeListener("data", onData);
-        if (wasRaw !== undefined) stdin.setRawMode(false);
+        stdin.setRawMode(false);
         rl.close();
         resolve(data);
       } else if (c === "\u0003") {
-        // Ctrl+C
         process.exit(1);
       } else if (c === "\u007f" || c === "\b") {
-        // 退格
         if (data.length > 0) {
           data = data.slice(0, -1);
           process.stdout.write("\b \b");
@@ -318,15 +556,17 @@ function promptPassword(prompt: string): Promise<string> {
 
 async function getPassphrase(confirm = false): Promise<string> {
   const p1 = await promptPassword("请输入口令: ");
-  if (p1.length < 6) throw new Error("口令至少 6 个字符");
+  if (p1.length < 6)
+    throw new VaultError(ErrorCode.WeakPassphrase, "口令至少 6 个字符");
   if (confirm) {
     const p2 = await promptPassword("再次输入口令: ");
-    if (p1 !== p2) throw new Error("两次输入的口令不一致");
+    if (p1 !== p2)
+      throw new VaultError(ErrorCode.AuthFailed, "两次输入的口令不一致");
   }
   return p1;
 }
 
-/* ----------------------- CLI ----------------------- */
+/* ===================== CLI ===================== */
 
 function getOpt(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -350,104 +590,114 @@ async function main(): Promise<void> {
   import <file>              导入加密文件
   rekey                      修改口令
   stats                      查看统计
-注意：所有操作会提示输入口令以解锁。
+  demo                       演示
 `);
     return;
   }
 
-  switch (cmd) {
-    case "init": {
-      if (store.isInitialized()) throw new Error("已初始化，使用 rekey 修改口令");
+  switch (cmd as Command) {
+    case Command.Init: {
+      if (store.isInitialized())
+        throw new VaultError(
+          ErrorCode.AlreadyInitialized,
+          "已初始化，使用 rekey 修改口令",
+        );
       const pass = await getPassphrase(true);
       store.init(pass);
       console.log("已初始化加密存储:", file);
       break;
     }
-    case "set": {
+    case Command.Set: {
       const [key, ...valParts] = rest;
-      if (!key) throw new Error("缺少 key");
+      if (!key) throw new VaultError(ErrorCode.IoError, "缺少 key");
       const value = valParts.join(" ");
-      if (!value) throw new Error("缺少 value");
+      if (!value) throw new VaultError(ErrorCode.IoError, "缺少 value");
       const pass = await getPassphrase();
-      if (!store.unlock(pass)) throw new Error("口令错误");
-      // 尝试解析 JSON，否则按字符串
+      if (!store.unlock(pass)) throw new AuthError("口令错误");
       let parsed: unknown = value;
-      try { parsed = JSON.parse(value); } catch { /* 保持字符串 */ }
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        /* 字符串 */
+      }
       store.set(key, parsed);
       console.log("已加密保存:", key);
       store.lock();
       break;
     }
-    case "get": {
+    case Command.Get: {
       const [key] = rest;
-      if (!key) throw new Error("缺少 key");
+      if (!key) throw new VaultError(ErrorCode.IoError, "缺少 key");
       const pass = await getPassphrase();
-      if (!store.unlock(pass)) throw new Error("口令错误");
-      const v = store.get(key);
-      console.log(v === null ? "(nil)" : typeof v === "string" ? v : JSON.stringify(v, null, 2));
+      if (!store.unlock(pass)) throw new AuthError("口令错误");
+      const result = store.tryGet<unknown>(key);
+      if (isOpSuccess(result))
+        console.log(
+          typeof result.value === "string"
+            ? result.value
+            : JSON.stringify(result.value, null, 2),
+        );
+      else if (result.kind === "notfound") console.log("(nil)");
+      else if (isOpError(result)) console.error("错误:", result.message);
       store.lock();
       break;
     }
-    case "del": {
+    case Command.Del: {
       const [key] = rest;
-      if (!key) throw new Error("缺少 key");
+      if (!key) throw new VaultError(ErrorCode.IoError, "缺少 key");
       const pass = await getPassphrase();
-      if (!store.unlock(pass)) throw new Error("口令错误");
+      if (!store.unlock(pass)) throw new AuthError("口令错误");
       console.log(store.del(key) ? "已删除" : "(nil)");
       store.lock();
       break;
     }
-    case "keys": {
+    case Command.Keys: {
       const pass = await getPassphrase();
-      if (!store.unlock(pass)) throw new Error("口令错误");
+      if (!store.unlock(pass)) throw new AuthError("口令错误");
       const keys = store.keys();
       console.log(keys.length === 0 ? "(empty)" : keys.join("\n"));
       store.lock();
       break;
     }
-    case "export": {
+    case Command.Export: {
       const [out] = rest;
-      if (!out) throw new Error("缺少导出文件路径");
+      if (!out) throw new VaultError(ErrorCode.IoError, "缺少导出文件路径");
       const pass = await getPassphrase();
-      if (!store.unlock(pass)) throw new Error("口令错误");
+      if (!store.unlock(pass)) throw new AuthError("口令错误");
       store.exportToFile(out);
       console.log("已导出到:", out);
       store.lock();
       break;
     }
-    case "import": {
+    case Command.Import: {
       const [inp] = rest;
-      if (!inp) throw new Error("缺少导入文件路径");
+      if (!inp) throw new VaultError(ErrorCode.IoError, "缺少导入文件路径");
       const pass = await getPassphrase();
-      if (!store.unlock(pass)) throw new Error("口令错误");
+      if (!store.unlock(pass)) throw new AuthError("口令错误");
       const n = store.importFromFile(inp);
       console.log(`已导入 ${n} 个新条目`);
       store.lock();
       break;
     }
-    case "rekey": {
+    case Command.Rekey: {
       const pass = await getPassphrase();
-      if (!store.unlock(pass)) throw new Error("口令错误");
+      if (!store.unlock(pass)) throw new AuthError("口令错误");
       const newPass = await getPassphrase(true);
       store.rekey(newPass);
       console.log("口令已修改，所有条目已重新加密");
       store.lock();
       break;
     }
-    case "stats": {
+    case Command.Stats: {
       console.log(store.stats());
       break;
     }
-    case "demo": {
-      // 自动化演示（不交互）
+    case Command.Demo: {
       const pass = "demo-pass-123";
-      if (store.isInitialized()) {
-        // 删除旧文件以便重新演示
-        fs.unlinkSync(file);
-      }
+      if (store.isInitialized()) fs.unlinkSync(file);
       store.init(pass);
       console.log("=== 加密存储演示 ===");
-      console.log("已初始化 vault");
+      console.log("已初始化 vault, 状态:", store.state);
       store.set("api-key", "sk-abc123-secret");
       store.set("db-config", { host: "localhost", port: 5432, user: "admin" });
       store.set("note", "这是一段机密笔记");
@@ -455,26 +705,31 @@ async function main(): Promise<void> {
       console.log("api-key:", store.get("api-key"));
       console.log("db-config:", store.get("db-config"));
       console.log("note:", store.get("note"));
-      // 文件中看不到明文
       const rawFile = fs.readFileSync(file, "utf8");
-      console.log("\n文件中是否包含明文 'sk-abc123-secret':", rawFile.includes("sk-abc123-secret"));
-      console.log("文件中是否包含明文 '机密笔记':", rawFile.includes("机密笔记"));
-      // 错误口令
+      console.log(
+        "\n文件中是否包含明文 'sk-abc123-secret':",
+        rawFile.includes("sk-abc123-secret"),
+      );
+      console.log(
+        "文件中是否包含明文 '机密笔记':",
+        rawFile.includes("机密笔记"),
+      );
       console.log("\n用错误口令解锁:", store.unlock("wrong-pass"));
-      // 重新加密
       store.unlock(pass);
       store.rekey("new-pass-456");
       console.log("rekey 后用新口令解锁:", store.unlock("new-pass-456"));
       console.log("rekey 后 api-key:", store.get("api-key"));
-      // 导出
       const exp = path.join(process.cwd(), "vault-export.dat");
       store.exportToFile(exp);
       console.log("已导出到:", exp);
+      console.log("\n迭代所有条目:");
+      for (const [k, item] of store.iterateItems())
+        console.log(`  ${k}: ct=${item.ct.slice(0, 20)}...`);
       store.lock();
       break;
     }
     default:
-      throw new Error(`未知命令: ${cmd}`);
+      throw new VaultError(ErrorCode.UnknownCommand, `未知命令: ${cmd}`);
   }
 }
 

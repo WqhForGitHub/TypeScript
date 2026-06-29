@@ -11,7 +11,13 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "filesystem", "watcher", "monitor", "fs"],
+  "keywords": [
+    "typescript",
+    "filesystem",
+    "watcher",
+    "monitor",
+    "fs"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

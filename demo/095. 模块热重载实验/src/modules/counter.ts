@@ -14,7 +14,7 @@
 // HMR 运行时注入的全局变量（由 vm.Script 沙箱提供）
 declare const __hmr_data__: Record<string, any>;
 declare const __hmr_dispose__: (
-    cb: (data: Record<string, any>) => void,
+  cb: (data: Record<string, any>) => void,
 ) => void;
 declare const __hmr_accept__: (cb?: () => void) => void;
 
@@ -23,33 +23,33 @@ let count = __hmr_data__?.count ?? 0;
 
 // 注册状态保存回调：重载前保存当前计数
 __hmr_dispose__((data) => {
-    data.count = count;
+  data.count = count;
 });
 
 // 注册更新接受回调：重载后打印通知
 __hmr_accept__(() => {
-    console.log("[Counter] 模块已热重载，当前计数:", count);
+  console.log("[Counter] 模块已热重载，当前计数:", count);
 });
 
 /** 增加计数并返回新值 */
 export function increment(): number {
-    count++;
-    return count;
+  count++;
+  return count;
 }
 
 /** 减少计数并返回新值 */
 export function decrement(): number {
-    count--;
-    return count;
+  count--;
+  return count;
 }
 
 /** 获取当前计数 */
 export function getCount(): number {
-    return count;
+  return count;
 }
 
 /** 重置计数 */
 export function reset(): number {
-    count = 0;
-    return count;
+  count = 0;
+  return count;
 }

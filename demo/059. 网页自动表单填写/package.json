@@ -11,7 +11,13 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "form", "autofill", "http", "cli"],
+  "keywords": [
+    "typescript",
+    "form",
+    "autofill",
+    "http",
+    "cli"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

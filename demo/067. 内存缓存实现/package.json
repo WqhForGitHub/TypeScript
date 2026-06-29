@@ -3,13 +3,22 @@
   "version": "1.0.0",
   "description": "内存缓存实现，支持 LRU / LFU / FIFO / TTL 策略、优先级、标签、指标统计",
   "main": "dist/index.js",
-  "bin": { "cache": "dist/index.js" },
+  "bin": {
+    "cache": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "cache", "lru", "lfu", "fifo", "ttl"],
+  "keywords": [
+    "typescript",
+    "cache",
+    "lru",
+    "lfu",
+    "fifo",
+    "ttl"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

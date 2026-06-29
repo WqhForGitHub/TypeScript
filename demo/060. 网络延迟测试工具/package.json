@@ -11,7 +11,15 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "network", "latency", "ping", "traceroute", "speedtest", "cli"],
+  "keywords": [
+    "typescript",
+    "network",
+    "latency",
+    "ping",
+    "traceroute",
+    "speedtest",
+    "cli"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

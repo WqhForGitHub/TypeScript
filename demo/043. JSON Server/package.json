@@ -3,13 +3,21 @@
   "version": "1.0.0",
   "description": "JSON Server: 加载 JSON 文件作为数据库，提供完整 CRUD REST API",
   "main": "dist/index.js",
-  "bin": { "json-server": "dist/index.js" },
+  "bin": {
+    "json-server": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "json", "rest", "api", "server"],
+  "keywords": [
+    "typescript",
+    "json",
+    "rest",
+    "api",
+    "server"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

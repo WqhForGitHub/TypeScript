@@ -3,13 +3,21 @@
   "version": "1.0.0",
   "description": "图片上传与展示 Web 应用：多图上传、缩略图、画廊、删除、JSON 元数据",
   "main": "dist/index.js",
-  "bin": { "image-gallery-web-app": "dist/index.js" },
+  "bin": {
+    "image-gallery-web-app": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "image", "gallery", "upload", "multipart"],
+  "keywords": [
+    "typescript",
+    "image",
+    "gallery",
+    "upload",
+    "multipart"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

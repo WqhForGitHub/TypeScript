@@ -11,7 +11,14 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "cli", "file", "read", "write", "tool"],
+  "keywords": [
+    "typescript",
+    "cli",
+    "file",
+    "read",
+    "write",
+    "tool"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

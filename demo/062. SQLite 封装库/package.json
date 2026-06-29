@@ -3,13 +3,21 @@
   "version": "1.0.0",
   "description": "内存 SQL 数据库封装，包含 SQL 词法/语法分析器，支持 CREATE/INSERT/SELECT/UPDATE/DELETE",
   "main": "dist/index.js",
-  "bin": { "sql-db": "dist/index.js" },
+  "bin": {
+    "sql-db": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "sql", "database", "parser", "in-memory"],
+  "keywords": [
+    "typescript",
+    "sql",
+    "database",
+    "parser",
+    "in-memory"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

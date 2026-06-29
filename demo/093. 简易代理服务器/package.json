@@ -8,7 +8,12 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "proxy", "http", "server"],
+  "keywords": [
+    "typescript",
+    "proxy",
+    "http",
+    "server"
+  ],
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^20.11.0",

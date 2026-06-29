@@ -11,7 +11,14 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "library", "template", "engine", "render", "utils"],
+  "keywords": [
+    "typescript",
+    "library",
+    "template",
+    "engine",
+    "render",
+    "utils"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

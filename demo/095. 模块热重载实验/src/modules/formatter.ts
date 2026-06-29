@@ -15,10 +15,10 @@
 declare const __hmr_accept__: (cb?: () => void) => void;
 
 __hmr_accept__(() => {
-    console.log("[Formatter] 模块已热重载");
+  console.log("[Formatter] 模块已热重载");
 });
 
 /** 格式化计数器值 */
 export function format(count: number): string {
-    return `[计数器] 当前值: ${count}`;
+  return `[计数器] 当前值: ${count}`;
 }

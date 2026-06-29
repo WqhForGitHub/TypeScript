@@ -11,7 +11,14 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "library", "math", "utils", "statistics", "matrix"],
+  "keywords": [
+    "typescript",
+    "library",
+    "math",
+    "utils",
+    "statistics",
+    "matrix"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

@@ -1,34 +1,20 @@
 #!/usr/bin/env node
 /**
- * 数字猜谜游戏 (Number Guessing Game)
- * ----------------------------------
- * 电脑随机生成一个 [1, N] 范围内的整数，玩家猜测，系统提示 "大了" / "小了"。
+ * 数字猜谜游戏 (Number Guessing Game) — Enhanced Edition
  *
- * 难度：
- *   easy    范围 1..50
- *   medium  范围 1..100
- *   hard    范围 1..1000
- *
- * 评分：
- *   基础分 = 难度系数 × (上限 - 尝试次数 + 1)
- *   难度系数: easy=1, medium=2, hard=5
- *   未猜中不记分
- *
- * 命令：
- *   play [difficulty]  开始游戏 (默认 medium)
- *   stats              查看个人统计 (尝试次数、最佳分数等)
- *   leaderboard        查看本地排行榜 (Top 10)
- *   clear              清空本地数据 (需确认)
- *   help / h           帮助
- *   quit / q           退出
- *
- * 数据存储：
- *   ~/.number_guess_data.json 包含 stats 与 leaderboard
+ * TypeScript features: enums, generics, discriminated unions, mapped types,
+ * conditional types, template literal types, type guards, utility types,
+ * tuples, abstract classes, function overloads, as const, custom errors,
+ * generators, symbols, satisfies, getters/setters.
  */
 
 import * as readline from "readline";
 import * as path from "path";
 import * as fs from "fs";
+
+// ============================================================
+// 1. 常量与枚举
+// ============================================================
 
 const ANSI = {
   RESET: "\x1b[0m",
@@ -41,27 +27,100 @@ const ANSI = {
   BLUE: "\x1b[34m",
   CYAN: "\x1b[36m",
   GRAY: "\x1b[90m",
-};
+} as const;
 
-type Difficulty = "easy" | "medium" | "hard";
+enum Difficulty {
+  Easy = "easy",
+  Medium = "medium",
+  Hard = "hard",
+  Insane = "insane",
+}
+enum GamePhase {
+  Menu = "menu",
+  Playing = "playing",
+  Won = "won",
+  Lost = "lost",
+}
+enum HintType {
+  Range = "range",
+  HotCold = "hotcold",
+  Divisible = "divisible",
+  Parity = "parity",
+}
+enum Color {
+  Red = "red",
+  Green = "green",
+  Yellow = "yellow",
+  Cyan = "cyan",
+  Gray = "gray",
+  Bold = "bold",
+}
+
+type ColorCode = (typeof ANSI)[keyof typeof ANSI];
+
+const COLOR_MAP: Record<Color, ColorCode> = {
+  [Color.Red]: ANSI.RED,
+  [Color.Green]: ANSI.GREEN,
+  [Color.Yellow]: ANSI.YELLOW,
+  [Color.Cyan]: ANSI.CYAN,
+  [Color.Gray]: ANSI.GRAY,
+  [Color.Bold]: ANSI.BOLD,
+} as const satisfies Record<Color, ColorCode>;
 
 interface DifficultyConfig {
-  name: Difficulty;
-  upper: number;
-  coefficient: number;
+  readonly upper: number;
+  readonly coefficient: number;
+  readonly maxAttempts: number;
+  readonly label: string;
+  readonly hintsAllowed: readonly HintType[];
 }
 
 const DIFFICULTIES: Record<Difficulty, DifficultyConfig> = {
-  easy: { name: "easy", upper: 50, coefficient: 1 },
-  medium: { name: "medium", upper: 100, coefficient: 2 },
-  hard: { name: "hard", upper: 1000, coefficient: 5 },
-};
+  [Difficulty.Easy]: {
+    upper: 50,
+    coefficient: 1,
+    maxAttempts: 10,
+    label: "简单",
+    hintsAllowed: [HintType.Range, HintType.HotCold],
+  },
+  [Difficulty.Medium]: {
+    upper: 100,
+    coefficient: 2,
+    maxAttempts: 8,
+    label: "中等",
+    hintsAllowed: [HintType.Range, HintType.HotCold, HintType.Parity],
+  },
+  [Difficulty.Hard]: {
+    upper: 500,
+    coefficient: 5,
+    maxAttempts: 12,
+    label: "困难",
+    hintsAllowed: [HintType.Range, HintType.Divisible, HintType.Parity],
+  },
+  [Difficulty.Insane]: {
+    upper: 1000,
+    coefficient: 10,
+    maxAttempts: 15,
+    label: "疯狂",
+    hintsAllowed: [HintType.Divisible, HintType.Parity],
+  },
+} as const satisfies Record<Difficulty, DifficultyConfig>;
+
+const DATA_FILE = path.join(
+  process.env.USERPROFILE || process.env.HOME || ".",
+  ".number_guess_data.json",
+);
+
+// ============================================================
+// 2. 接口与类型
+// ============================================================
 
 interface GameRecord {
-  difficulty: Difficulty;
-  attempts: number;
-  score: number;
-  timestamp: number;
+  readonly difficulty: Difficulty;
+  readonly attempts: number;
+  readonly score: number;
+  readonly timestamp: number;
+  readonly won: boolean;
 }
 
 interface PlayerData {
@@ -69,14 +128,351 @@ interface PlayerData {
   totalGames: number;
   totalWins: number;
   bestScore: number;
+  currentStreak: number;
+  bestStreak: number;
   bestAttempts: Partial<Record<Difficulty, number>>;
   records: GameRecord[];
+  readonly [key: string]: unknown;
 }
 
-const DATA_FILE = path.join(
-  process.env.USERPROFILE || process.env.HOME || ".",
-  ".number_guess_data.json"
-);
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+interface EventMap {
+  guess: {
+    readonly value: number;
+    readonly attempts: number;
+    readonly hint: string;
+  };
+  win: {
+    readonly target: number;
+    readonly attempts: number;
+    readonly score: number;
+  };
+  lose: { readonly target: number; readonly attempts: number };
+  hint: { readonly type: HintType; readonly text: string };
+  phaseChange: { readonly from: GamePhase; readonly to: GamePhase };
+}
+
+type EventType = keyof EventMap;
+
+type GameEvent =
+  | { readonly type: "guess"; readonly value: number }
+  | { readonly type: "hint"; readonly hintType: HintType }
+  | { readonly type: "give" }
+  | { readonly type: "quit" };
+
+type EventOfType<T extends GameEvent["type"]> = Extract<GameEvent, { type: T }>;
+
+type ParsedCommand =
+  | { readonly action: "guess"; readonly value: number }
+  | { readonly action: "hint" }
+  | { readonly action: "give" }
+  | { readonly action: "quit" }
+  | { readonly action: "unknown"; readonly input: string };
+
+// ============================================================
+// 3. 自定义错误
+// ============================================================
+
+abstract class GameError extends Error {
+  abstract readonly code: string;
+  constructor(msg: string) {
+    super(msg);
+    this.name = this.constructor.name;
+  }
+}
+
+class InvalidGuessError extends GameError {
+  readonly code = "INVALID_GUESS";
+  constructor(value: number, upper: number) {
+    super(`请输入 1 到 ${upper} 之间的数字, 得到: ${value}`);
+  }
+}
+
+class NoHintsLeftError extends GameError {
+  readonly code = "NO_HINTS";
+  constructor() {
+    super("已无可用提示次数");
+  }
+}
+
+// ============================================================
+// 4. 类型守卫
+// ============================================================
+
+function isDifficulty(value: unknown): value is Difficulty {
+  return (
+    typeof value === "string" &&
+    Object.values(Difficulty).includes(value as Difficulty)
+  );
+}
+
+function isHintType(value: unknown): value is HintType {
+  return (
+    typeof value === "string" &&
+    Object.values(HintType).includes(value as HintType)
+  );
+}
+
+// ============================================================
+// 5. 泛型事件系统
+// ============================================================
+
+class EventEmitter<E extends object> {
+  private readonly handlers: Map<string, Set<(p: any) => void>> = new Map();
+
+  on<K extends keyof E>(event: K, handler: (payload: E[K]) => void): void {
+    const key = String(event);
+    if (!this.handlers.has(key)) this.handlers.set(key, new Set());
+    this.handlers.get(key)!.add(handler as (p: any) => void);
+  }
+
+  emit<K extends keyof E>(event: K, payload: E[K]): void {
+    this.handlers.get(String(event))?.forEach((h) => {
+      try {
+        (h as (p: E[K]) => void)(payload);
+      } catch {
+        /* swallow */
+      }
+    });
+  }
+}
+
+// ============================================================
+// 6. 生成器
+// ============================================================
+
+function* iterateRecords(
+  records: readonly GameRecord[],
+): Generator<GameRecord> {
+  for (const r of records) yield r;
+}
+
+function* recentRecords(
+  records: readonly GameRecord[],
+  count: number,
+): Generator<GameRecord> {
+  const start = Math.max(0, records.length - count);
+  for (let i = records.length - 1; i >= start; i--) {
+    yield records[i]!;
+  }
+}
+
+// ============================================================
+// 7. 抽象提示策略
+// ============================================================
+
+abstract class HintStrategy {
+  abstract readonly type: HintType;
+  abstract generate(
+    target: number,
+    upper: number,
+    lastGuess: number | null,
+  ): string;
+}
+
+class RangeHint extends HintStrategy {
+  readonly type = HintType.Range;
+  generate(_target: number, _upper: number, lastGuess: number | null): string {
+    if (lastGuess === null) return "还没有猜过, 无法给出范围提示";
+    if (lastGuess < _target) return `目标数字 > ${lastGuess}`;
+    return `目标数字 < ${lastGuess}`;
+  }
+}
+
+class HotColdHint extends HintStrategy {
+  readonly type = HintType.HotCold;
+  generate(target: number, _upper: number, lastGuess: number | null): string {
+    if (lastGuess === null) return "还没有猜过, 无法判断冷热";
+    const diff = Math.abs(target - lastGuess);
+    if (diff === 0) return "正中靶心!";
+    if (diff <= 5) return "🔥 极热!";
+    if (diff <= 15) return "🌡️ 热";
+    if (diff <= 30) return "❄️ 冷";
+    return "🧊 极冷";
+  }
+}
+
+class DivisibleHint extends HintStrategy {
+  readonly type = HintType.Divisible;
+  generate(target: number, _upper: number, _lastGuess: number | null): string {
+    const divisors: number[] = [];
+    for (const d of [2, 3, 5, 7]) {
+      if (target % d === 0) divisors.push(d);
+    }
+    if (divisors.length === 0) return "目标数字是质数";
+    return `目标数字能被 ${divisors.join(", ")} 整除`;
+  }
+}
+
+class ParityHint extends HintStrategy {
+  readonly type = HintType.Parity;
+  generate(target: number, _upper: number, _lastGuess: number | null): string {
+    return target % 2 === 0 ? "目标数字是偶数" : "目标数字是奇数";
+  }
+}
+
+const HINT_STRATEGIES: Record<HintType, HintStrategy> = {
+  [HintType.Range]: new RangeHint(),
+  [HintType.HotCold]: new HotColdHint(),
+  [HintType.Divisible]: new DivisibleHint(),
+  [HintType.Parity]: new ParityHint(),
+} as const satisfies Record<HintType, HintStrategy>;
+
+// ============================================================
+// 8. 游戏引擎
+// ============================================================
+
+class GameEvents extends EventEmitter<EventMap> {}
+
+class GuessGame {
+  private phase: GamePhase = GamePhase.Menu;
+  private readonly events = new GameEvents();
+  private readonly target: number;
+  private attempts: number = 0;
+  private lastGuess: number | null = null;
+  private hintsUsed: number = 0;
+  private readonly startTime: number;
+  private readonly data: PlayerData;
+
+  constructor(
+    readonly difficulty: Difficulty,
+    data: PlayerData,
+  ) {
+    const cfg = DIFFICULTIES[difficulty];
+    this.target = Math.floor(Math.random() * cfg.upper) + 1;
+    this.startTime = Date.now();
+    this.data = data;
+  }
+
+  get currentPhase(): GamePhase {
+    return this.phase;
+  }
+  get attemptCount(): number {
+    return this.attempts;
+  }
+  get remainingAttempts(): number {
+    return DIFFICULTIES[this.difficulty].maxAttempts - this.attempts;
+  }
+  get elapsedTime(): number {
+    return Math.floor((Date.now() - this.startTime) / 1000);
+  }
+
+  private transition(to: GamePhase): void {
+    const from = this.phase;
+    if (from === to) return;
+    this.events.emit("phaseChange", { from, to });
+    this.phase = to;
+  }
+
+  on<K extends EventType>(
+    event: K,
+    handler: (payload: EventMap[K]) => void,
+  ): void {
+    this.events.on(event, handler);
+  }
+
+  start(): void {
+    this.transition(GamePhase.Playing);
+  }
+
+  guess(value: number): { hint: string; won: boolean } {
+    const cfg = DIFFICULTIES[this.difficulty];
+    if (this.phase !== GamePhase.Playing)
+      return { hint: "游戏未在进行中", won: false };
+    if (value < 1 || value > cfg.upper)
+      throw new InvalidGuessError(value, cfg.upper);
+
+    this.attempts++;
+    this.lastGuess = value;
+    let hint: string;
+
+    if (value === this.target) {
+      hint = "恭喜! 答对了!";
+      const score = cfg.coefficient * (cfg.upper - this.attempts + 1);
+      this.transition(GamePhase.Won);
+      this.events.emit("win", {
+        target: this.target,
+        attempts: this.attempts,
+        score,
+      });
+      this.saveResult(true, score);
+      return { hint, won: true };
+    }
+
+    if (this.attempts >= cfg.maxAttempts) {
+      hint = `次数用尽! 答案是 ${this.target}`;
+      this.transition(GamePhase.Lost);
+      this.events.emit("lose", {
+        target: this.target,
+        attempts: this.attempts,
+      });
+      this.saveResult(false, 0);
+      return { hint, won: false };
+    }
+
+    if (value < this.target) {
+      hint = `小了! (剩余 ${this.remainingAttempts} 次)`;
+    } else {
+      hint = `大了! (剩余 ${this.remainingAttempts} 次)`;
+    }
+
+    this.events.emit("guess", { value, attempts: this.attempts, hint });
+    return { hint, won: false };
+  }
+
+  useHint(): string {
+    const cfg = DIFFICULTIES[this.difficulty];
+    const maxHints = Math.max(1, Math.floor(cfg.maxAttempts / 4));
+    if (this.hintsUsed >= maxHints) throw new NoHintsLeftError();
+
+    const available = cfg.hintsAllowed;
+    const hintType =
+      available[this.hintsUsed % available.length] ?? HintType.Range;
+    const strategy = HINT_STRATEGIES[hintType];
+    const text = strategy.generate(this.target, cfg.upper, this.lastGuess);
+    this.hintsUsed++;
+    this.events.emit("hint", { type: hintType, text });
+    return `[提示 ${this.hintsUsed}/${maxHints}] ${text}`;
+  }
+
+  giveUp(): void {
+    if (this.phase !== GamePhase.Playing) return;
+    this.transition(GamePhase.Lost);
+    this.events.emit("lose", { target: this.target, attempts: this.attempts });
+    this.saveResult(false, 0);
+  }
+
+  private saveResult(won: boolean, score: number): void {
+    const d = this.data as Mutable<PlayerData>;
+    d.totalGames++;
+    if (won) {
+      d.totalWins++;
+      d.currentStreak++;
+      if (d.currentStreak > d.bestStreak) d.bestStreak = d.currentStreak;
+      if (score > d.bestScore) d.bestScore = score;
+      const best = d.bestAttempts[this.difficulty];
+      if (best === undefined || this.attempts < best) {
+        d.bestAttempts[this.difficulty] = this.attempts;
+      }
+    } else {
+      d.currentStreak = 0;
+    }
+    d.records.push({
+      difficulty: this.difficulty,
+      attempts: this.attempts,
+      score,
+      timestamp: Date.now(),
+      won,
+    });
+    if (d.records.length > 200) d.records = d.records.slice(-200);
+    saveData(this.data);
+  }
+}
+
+// ============================================================
+// 9. 数据持久化
+// ============================================================
 
 function loadData(): PlayerData {
   const empty: PlayerData = {
@@ -84,16 +480,20 @@ function loadData(): PlayerData {
     totalGames: 0,
     totalWins: 0,
     bestScore: 0,
+    currentStreak: 0,
+    bestStreak: 0,
     bestAttempts: {},
     records: [],
   };
   try {
     if (fs.existsSync(DATA_FILE)) {
-      const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+      const data = JSON.parse(
+        fs.readFileSync(DATA_FILE, "utf-8"),
+      ) as Partial<PlayerData>;
       return { ...empty, ...data };
     }
   } catch {
-    /* 忽略 */
+    /* ignore */
   }
   return empty;
 }
@@ -102,276 +502,317 @@ function saveData(data: PlayerData): void {
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch {
-    /* 忽略 */
+    /* ignore */
   }
 }
 
-// ============== 游戏逻辑 ==============
-function startGame(
-  rl: readline.Interface,
-  data: PlayerData,
-  difficulty: Difficulty
-): void {
-  const cfg = DIFFICULTIES[difficulty];
-  const target = Math.floor(Math.random() * cfg.upper) + 1;
-  let attempts = 0;
-  let won = false;
-  const startTime = Date.now();
+// ============================================================
+// 10. 命令解析 (函数重载)
+// ============================================================
 
-  process.stdout.write(ANSI.CLEAR + ANSI.HOME);
-  console.log(
-    ANSI.BOLD +
-      ANSI.CYAN +
-      `===== 数字猜谜 (${difficulty}) =====` +
-      ANSI.RESET
-  );
-  console.log(
-    `范围: 1 - ${cfg.upper}  难度系数: ${cfg.coefficient}  目标: ???`
-  );
-  console.log(
-    ANSI.GRAY + "输入数字进行猜测, 'give' 放弃, 'quit' 退出" + ANSI.RESET + "\n"
-  );
+function parseCommand(line: string): ParsedCommand;
+function parseCommand(line: string, upper: number): ParsedCommand;
+function parseCommand(line: string, upper?: number): ParsedCommand {
+  const input = line.trim().toLowerCase();
+  if (input === "q" || input === "quit") return { action: "quit" };
+  if (input === "h" || input === "hint") return { action: "hint" };
+  if (input === "give" || input === "surrender") return { action: "give" };
 
-  const ask = () => {
-    rl.question(`第 ${attempts + 1} 次尝试> `, (answer: string) => {
-      const input = answer.trim().toLowerCase();
-      if (input === "quit" || input === "q") {
-        process.stdout.write(ANSI.CLEAR + ANSI.HOME);
-        console.log("再见!");
-        process.exit(0);
-      }
-      if (input === "give") {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        console.log(
-          ANSI.RED +
-            `已放弃! 答案是 ${target}, 用时 ${elapsed}s` +
-            ANSI.RESET
-        );
-        data.totalGames++;
-        saveData(data);
-        returnToMenu(rl, data);
-        return;
-      }
-      const guess = parseInt(input, 10);
-      if (Number.isNaN(guess)) {
-        console.log(ANSI.RED + "请输入有效数字" + ANSI.RESET);
-        ask();
-        return;
-      }
-      if (guess < 1 || guess > cfg.upper) {
-        console.log(
-          ANSI.RED + `请输入 1 到 ${cfg.upper} 之间的数字` + ANSI.RESET
-        );
-        ask();
-        return;
-      }
-      attempts++;
-      if (guess === target) {
-        won = true;
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const score =
-          cfg.coefficient * (cfg.upper - attempts + 1);
-        console.log(
-          ANSI.GREEN +
-            ANSI.BOLD +
-            `恭喜! 答案就是 ${target}!` +
-            ANSI.RESET
-        );
-        console.log(
-          `尝试次数: ${attempts}   用时: ${elapsed}s   得分: ${ANSI.YELLOW}${score}${ANSI.RESET}`
-        );
-        // 更新数据
-        data.totalGames++;
-        data.totalWins++;
-        if (score > data.bestScore) data.bestScore = score;
-        const best = data.bestAttempts[difficulty];
-        if (best === undefined || attempts < best) {
-          data.bestAttempts[difficulty] = attempts;
-        }
-        data.records.push({
-          difficulty,
-          attempts,
-          score,
-          timestamp: Date.now(),
-        });
-        // 仅保留最近 200 条记录
-        if (data.records.length > 200) {
-          data.records = data.records.slice(-200);
-        }
-        saveData(data);
-        returnToMenu(rl, data);
-        return;
-      } else if (guess < target) {
-        console.log(ANSI.YELLOW + `小了! (尝试 ${attempts})` + ANSI.RESET);
-      } else {
-        console.log(ANSI.YELLOW + `大了! (尝试 ${attempts})` + ANSI.RESET);
-      }
-      ask();
-    });
-  };
-  ask();
+  const num = parseInt(input, 10);
+  if (!Number.isNaN(num) && upper !== undefined && num >= 1 && num <= upper) {
+    return { action: "guess", value: num };
+  }
+  if (!Number.isNaN(num) && upper === undefined) {
+    return { action: "guess", value: num };
+  }
+  return { action: "unknown", input: line };
 }
 
-function returnToMenu(rl: readline.Interface, data: PlayerData): void {
-  rl.question("\n按回车返回菜单... ", () => {
-    showMenu(rl, data);
-  });
+// ============================================================
+// 11. 符号
+// ============================================================
+
+const SYM_SESSION = Symbol("session");
+
+interface GameSession {
+  [SYM_SESSION]: boolean;
+  readonly game: GuessGame;
+  readonly difficulty: Difficulty;
 }
 
-// ============== 显示 ==============
-function showMenu(rl: readline.Interface, data: PlayerData): void {
+function createSession(difficulty: Difficulty, data: PlayerData): GameSession {
+  const game = new GuessGame(difficulty, data);
+  game.start();
+  return { [SYM_SESSION]: true, game, difficulty };
+}
+
+// ============================================================
+// 12. 显示
+// ============================================================
+
+function colorize(
+  text: string,
+  color: Color,
+  useColor: boolean = true,
+): string {
+  return useColor ? `${COLOR_MAP[color]}${text}${ANSI.RESET}` : text;
+}
+
+function showMenu(data: PlayerData): void {
   process.stdout.write(ANSI.CLEAR + ANSI.HOME);
-  console.log(ANSI.BOLD + ANSI.CYAN + "===== 数字猜谜游戏 =====" + ANSI.RESET);
-  console.log(`玩家: ${data.playerName}  总场次: ${data.totalGames}  胜场: ${data.totalWins}  最高分: ${data.bestScore}`);
+  console.log(colorize("===== 数字猜谜游戏 =====", Color.Cyan));
+  console.log(
+    `玩家: ${data.playerName}  场次: ${data.totalGames}  胜: ${data.totalWins}  最高分: ${data.bestScore}  连胜: ${data.currentStreak}/${data.bestStreak}`,
+  );
   console.log("");
   console.log("命令:");
-  console.log("  play [easy|medium|hard]  开始游戏 (默认 medium)");
-  console.log("  stats                    查看个人统计");
-  console.log("  leaderboard              查看排行榜 (Top 10)");
-  console.log("  name <新名字>            修改玩家名");
-  console.log("  clear                    清空本地数据");
-  console.log("  help / h                 帮助");
-  console.log("  quit / q                 退出");
+  console.log("  play [easy|medium|hard|insane]  开始游戏 (默认 medium)");
+  console.log("  stats                           查看统计");
+  console.log("  leaderboard                     排行榜 (Top 10)");
+  console.log("  name <新名字>                   修改玩家名");
+  console.log("  clear                           清空数据");
+  console.log("  help / h                        帮助");
+  console.log("  quit / q                        退出");
   console.log("");
-  rl.setPrompt("菜单> ");
-  rl.prompt();
+  console.log("游戏内: 输入数字猜测, h 提示, give 放弃, q 退出");
 }
 
-function showStats(rl: readline.Interface, data: PlayerData): void {
-  console.log(ANSI.BOLD + ANSI.CYAN + "\n===== 个人统计 =====" + ANSI.RESET);
-  console.log(`玩家名: ${data.playerName}`);
-  console.log(`总场次: ${data.totalGames}`);
-  console.log(`胜利场次: ${data.totalWins}`);
-  console.log(`最高分: ${data.bestScore}`);
-  console.log("各难度最少尝试次数:");
-  (["easy", "medium", "hard"] as Difficulty[]).forEach((d) => {
-    const v = data.bestAttempts[d];
-    console.log(`  ${d.padEnd(8)}: ${v === undefined ? "未通关" : v + " 次"}`);
-  });
-  // 最近 5 场
-  console.log("\n最近 5 场记录:");
-  const recent = data.records.slice(-5).reverse();
-  if (recent.length === 0) {
-    console.log(ANSI.GRAY + "  (暂无记录)" + ANSI.RESET);
-  } else {
-    recent.forEach((r) => {
-      const date = new Date(r.timestamp).toLocaleString();
-      console.log(
-        `  [${r.difficulty.padEnd(7)}] 尝试 ${r.attempts} 次, 得分 ${r.score}   ${ANSI.GRAY}${date}${ANSI.RESET}`
-      );
-    });
-  }
-  rl.prompt();
-}
-
-function showLeaderboard(rl: readline.Interface, data: PlayerData): void {
-  console.log(ANSI.BOLD + ANSI.CYAN + "\n===== 排行榜 (Top 10) =====" + ANSI.RESET);
-  const sorted = [...data.records].sort((a, b) => b.score - a.score).slice(0, 10);
-  if (sorted.length === 0) {
-    console.log(ANSI.GRAY + "  (暂无记录)" + ANSI.RESET);
-  } else {
-    console.log(
-      `${"排名".padEnd(4)} ${"难度".padEnd(8)} ${"分数".padEnd(8)} ${"次数".padEnd(6)} ${"时间"}`
-    );
-    sorted.forEach((r, i) => {
-      const date = new Date(r.timestamp).toLocaleString();
-      console.log(
-        `${(i + 1).toString().padEnd(4)} ${r.difficulty.padEnd(8)} ${r.score.toString().padEnd(8)} ${r.attempts.toString().padEnd(6)} ${date}`
-      );
-    });
-  }
-  rl.prompt();
-}
-
-function clearData(rl: readline.Interface, data: PlayerData): void {
-  rl.question(
-    ANSI.RED + "确认清空所有本地数据? (yes/no) " + ANSI.RESET,
-    (answer: string) => {
-      if (answer.trim().toLowerCase() === "yes") {
-        const fresh: PlayerData = {
-          playerName: data.playerName,
-          totalGames: 0,
-          totalWins: 0,
-          bestScore: 0,
-          bestAttempts: {},
-          records: [],
-        };
-        saveData(fresh);
-        console.log(ANSI.GREEN + "已清空本地数据" + ANSI.RESET);
-        // 重置引用
-        Object.assign(data, fresh);
-      } else {
-        console.log("已取消");
-      }
-      rl.prompt();
-    }
+function showStats(data: PlayerData): void {
+  console.log(colorize("\n===== 个人统计 =====", Color.Cyan));
+  console.log(`玩家: ${data.playerName}`);
+  console.log(
+    `总场次: ${data.totalGames}  胜利: ${data.totalWins}  胜率: ${data.totalGames > 0 ? ((data.totalWins / data.totalGames) * 100).toFixed(1) : "0.0"}%`,
   );
+  console.log(
+    `最高分: ${data.bestScore}  当前连胜: ${data.currentStreak}  最佳连胜: ${data.bestStreak}`,
+  );
+  console.log("各难度最少尝试次数:");
+  for (const d of Object.values(Difficulty)) {
+    const v = data.bestAttempts[d];
+    console.log(
+      `  ${DIFFICULTIES[d].label.padEnd(4)}: ${v === undefined ? "未通关" : v + " 次"}`,
+    );
+  }
+  console.log("\n最近 5 场:");
+  let count = 0;
+  for (const r of recentRecords(data.records, 5)) {
+    const date = new Date(r.timestamp).toLocaleString();
+    const result = r.won
+      ? colorize("胜", Color.Green)
+      : colorize("负", Color.Red);
+    console.log(
+      `  [${DIFFICULTIES[r.difficulty].label}] ${result} 尝试 ${r.attempts} 次, 得分 ${r.score}  ${colorize(date, Color.Gray)}`,
+    );
+    count++;
+  }
+  if (count === 0) console.log(colorize("  (暂无记录)", Color.Gray));
 }
 
-// ============== 主程序 ==============
+function showLeaderboard(data: PlayerData): void {
+  console.log(colorize("\n===== 排行榜 (Top 10) =====", Color.Cyan));
+  const sorted = [...data.records]
+    .filter((r) => r.won)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+  if (sorted.length === 0) {
+    console.log(colorize("  (暂无记录)", Color.Gray));
+    return;
+  }
+  console.log(
+    `${"排名".padEnd(4)} ${"难度".padEnd(6)} ${"分数".padEnd(8)} ${"次数".padEnd(6)} 时间`,
+  );
+  sorted.forEach((r, i) => {
+    const date = new Date(r.timestamp).toLocaleString();
+    console.log(
+      `${(i + 1).toString().padEnd(4)} ${DIFFICULTIES[r.difficulty].label.padEnd(6)} ${r.score.toString().padEnd(8)} ${r.attempts.toString().padEnd(6)} ${date}`,
+    );
+  });
+}
+
+// ============================================================
+// 13. 主程序
+// ============================================================
+
 function main(): void {
   const data = loadData();
-  // 若首次运行, 询问玩家名
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
+
+  let session: GameSession | null = null;
+
+  const refreshMenu = (): void => {
+    showMenu(data);
+    rl.setPrompt("菜单> ");
+    rl.prompt();
+  };
 
   if (data.totalGames === 0 && data.records.length === 0) {
     rl.question("欢迎首次游玩! 请输入你的名字: ", (name: string) => {
       const trimmed = name.trim();
       if (trimmed) data.playerName = trimmed;
       saveData(data);
-      showMenu(rl, data);
+      refreshMenu();
     });
   } else {
-    showMenu(rl, data);
+    refreshMenu();
   }
 
   rl.on("line", (line: string) => {
+    if (session) {
+      const cfg = DIFFICULTIES[session.difficulty];
+      const cmd = parseCommand(line, cfg.upper);
+      switch (cmd.action) {
+        case "quit":
+          session = null;
+          refreshMenu();
+          return;
+        case "give":
+          session.game.giveUp();
+          console.log(
+            colorize(
+              `已放弃! 答案是 ${session.game.attemptCount} 次未猜中`,
+              Color.Red,
+            ),
+          );
+          session = null;
+          refreshMenu();
+          return;
+        case "hint":
+          try {
+            console.log(colorize(session.game.useHint(), Color.Yellow));
+          } catch (e) {
+            if (e instanceof GameError)
+              console.log(colorize(e.message, Color.Red));
+          }
+          break;
+        case "guess": {
+          try {
+            const result = session.game.guess(cmd.value);
+            console.log(result.hint);
+            if (result.won) {
+              console.log(
+                colorize(`用时: ${session.game.elapsedTime}s`, Color.Cyan),
+              );
+              session = null;
+              refreshMenu();
+              return;
+            }
+            if (session.game.currentPhase === GamePhase.Lost) {
+              session = null;
+              refreshMenu();
+              return;
+            }
+          } catch (e) {
+            if (e instanceof GameError)
+              console.log(colorize(e.message, Color.Red));
+          }
+          break;
+        }
+        default:
+          console.log(
+            colorize(
+              "未知命令, 输入数字猜测, h 提示, give 放弃, q 退出",
+              Color.Red,
+            ),
+          );
+      }
+      if (session && session.game.currentPhase === GamePhase.Playing) {
+        rl.setPrompt(`第 ${session.game.attemptCount + 1} 次> `);
+      }
+      rl.prompt();
+      return;
+    }
+
+    // Menu mode
     const parts = line.trim().split(/\s+/);
     const cmd = (parts[0] || "").toLowerCase();
-    const arg = (parts[1] || "").toLowerCase();
 
-    if (cmd === "quit" || cmd === "q") {
+    if (cmd === "q" || cmd === "quit") {
       process.stdout.write(ANSI.CLEAR + ANSI.HOME);
       console.log("再见!");
       process.exit(0);
-    } else if (cmd === "help" || cmd === "h") {
-      console.log("\n命令列表:");
-      console.log("  play [easy|medium|hard]  开始游戏");
-      console.log("  stats                    查看个人统计");
-      console.log("  leaderboard              查看排行榜 (Top 10)");
-      console.log("  name <新名字>            修改玩家名");
-      console.log("  clear                    清空本地数据");
-      console.log("  quit                     退出");
+    }
+    if (cmd === "play") {
+      const diff = isDifficulty(parts[1])
+        ? (parts[1] as Difficulty)
+        : Difficulty.Medium;
+      session = createSession(diff, data);
+      const cfg = DIFFICULTIES[diff];
+      process.stdout.write(ANSI.CLEAR + ANSI.HOME);
+      console.log(colorize(`===== 数字猜谜 (${cfg.label}) =====`, Color.Cyan));
+      console.log(
+        `范围: 1 - ${cfg.upper}  系数: ${cfg.coefficient}  最多 ${cfg.maxAttempts} 次`,
+      );
+      console.log(
+        colorize("输入数字猜测, h 提示, give 放弃, q 退出\n", Color.Gray),
+      );
+      rl.setPrompt(`第 1 次> `);
       rl.prompt();
-    } else if (cmd === "play") {
-      const diff: Difficulty =
-        arg === "easy" || arg === "medium" || arg === "hard" ? arg : "medium";
-      startGame(rl, data, diff);
-    } else if (cmd === "stats") {
-      showStats(rl, data);
-    } else if (cmd === "leaderboard" || cmd === "lb") {
-      showLeaderboard(rl, data);
-    } else if (cmd === "name") {
+      return;
+    }
+    if (cmd === "stats") {
+      showStats(data);
+      rl.prompt();
+      return;
+    }
+    if (cmd === "leaderboard" || cmd === "lb") {
+      showLeaderboard(data);
+      rl.prompt();
+      return;
+    }
+    if (cmd === "name") {
       const newName = parts.slice(1).join(" ").trim();
       if (newName) {
         data.playerName = newName;
         saveData(data);
-        console.log(ANSI.GREEN + `玩家名已更新为: ${newName}` + ANSI.RESET);
+        console.log(colorize(`玩家名已更新: ${newName}`, Color.Green));
       } else {
-        console.log(ANSI.RED + "请提供新名字" + ANSI.RESET);
+        console.log(colorize("请提供新名字", Color.Red));
       }
       rl.prompt();
-    } else if (cmd === "clear") {
-      clearData(rl, data);
-    } else if (cmd === "") {
-      rl.prompt();
-    } else {
-      console.log(ANSI.RED + `未知命令: ${cmd}` + ANSI.RESET);
-      rl.prompt();
+      return;
     }
+    if (cmd === "clear") {
+      rl.question(
+        colorize("确认清空所有数据? (yes/no) ", Color.Red),
+        (answer: string) => {
+          if (answer.trim().toLowerCase() === "yes") {
+            const fresh: PlayerData = {
+              playerName: data.playerName,
+              totalGames: 0,
+              totalWins: 0,
+              bestScore: 0,
+              currentStreak: 0,
+              bestStreak: 0,
+              bestAttempts: {},
+              records: [],
+            };
+            Object.assign(data, fresh);
+            saveData(data);
+            console.log(colorize("已清空数据", Color.Green));
+          } else {
+            console.log("已取消");
+          }
+          rl.prompt();
+        },
+      );
+      return;
+    }
+    if (cmd === "help" || cmd === "h") {
+      console.log(
+        "\n命令: play [easy|medium|hard|insane]  stats  leaderboard  name <名字>  clear  quit",
+      );
+      rl.prompt();
+      return;
+    }
+    if (cmd === "") {
+      rl.prompt();
+      return;
+    }
+    console.log(colorize(`未知命令: ${cmd}`, Color.Red));
+    rl.prompt();
   });
 
   rl.on("close", () => {

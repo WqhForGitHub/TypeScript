@@ -3,13 +3,22 @@
   "version": "1.0.0",
   "description": "数据加密存储，使用 AES-256-GCM 与 scrypt 密钥派生，加密 KV 存储，支持导入导出与重置口令",
   "main": "dist/index.js",
-  "bin": { "vault": "dist/index.js" },
+  "bin": {
+    "vault": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "crypto", "aes-gcm", "scrypt", "encryption", "storage"],
+  "keywords": [
+    "typescript",
+    "crypto",
+    "aes-gcm",
+    "scrypt",
+    "encryption",
+    "storage"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 自动化部署脚本 - 入口文件
+ * 自动化部署脚本 - 入口文件（增强版）
  *
  * 纯 TypeScript 实现的自动化部署工具 Demo
  * 支持: 多环境部署、流水线编排、SSH 远程操作、回滚机制
@@ -14,7 +14,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { Logger } from "./logger";
+import { Logger, formatDuration } from "./logger";
 import {
   CliArgs,
   DeployConfig,
@@ -24,17 +24,107 @@ import {
   printConfigSummary,
   generateDefaultConfig,
 } from "./config";
-import { Pipeline, PipelineResult, createDefaultPipeline } from "./pipeline";
+import {
+  Pipeline,
+  createDefaultPipeline,
+  isPipelineSuccess,
+  isPipelineFailure,
+  isPipelineDryRun,
+} from "./pipeline";
+import type { PipelineResult } from "./pipeline";
 import { setDemoMode } from "./tasks";
 
+// ─── 枚举 ─────────────────────────────────────────────────────
+enum CLIErrorCode {
+  InvalidArgs = "INVALID_ARGS",
+  ConfigMissing = "CONFIG_MISSING",
+  DeployFailed = "DEPLOY_FAILED",
+  RollbackNeeded = "ROLLBACK_NEEDED",
+}
+
+// ─── 工具类型 ─────────────────────────────────────────────────
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+// 条件类型
+type ParseResultFor<V extends boolean> = V extends true
+  ? { readonly ok: true; readonly args: CliArgs }
+  : { readonly ok: false; readonly error: string; readonly arg?: string };
+
+// 元组
+type ParsedArg = readonly [
+  key: string,
+  value: string | boolean | string[] | number,
+];
+
+// ─── 判别联合: 解析结果 ───────────────────────────────────────
+interface ParseSuccess {
+  readonly kind: "success";
+  readonly args: CliArgs;
+}
+
+interface ParseFailure {
+  readonly kind: "failure";
+  readonly error: string;
+  readonly arg?: string;
+}
+
+interface ParseExit {
+  readonly kind: "exit";
+  readonly code: number;
+}
+
+type ParseResult = ParseSuccess | ParseFailure | ParseExit;
+
+// 类型守卫
+function isParseSuccess(r: ParseResult): r is ParseSuccess {
+  return r.kind === "success";
+}
+function isParseFailure(r: ParseResult): r is ParseFailure {
+  return r.kind === "failure";
+}
+function isParseExit(r: ParseResult): r is ParseExit {
+  return r.kind === "exit";
+}
+
+// ─── 自定义错误 ───────────────────────────────────────────────
+abstract class CLIError extends Error {
+  abstract readonly code: CLIErrorCode;
+  constructor(message: string) {
+    super(message);
+    this.name = "CLIError";
+  }
+}
+
+class InvalidArgsError extends CLIError {
+  readonly code = CLIErrorCode.InvalidArgs;
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidArgsError";
+  }
+}
+
+class ConfigMissingError extends CLIError {
+  readonly code = CLIErrorCode.ConfigMissing;
+  constructor(path: string) {
+    super(`配置文件不存在: ${path}`);
+    this.name = "ConfigMissingError";
+  }
+}
+
+// ─── 符号 ─────────────────────────────────────────────────────
+const PARSED_ARGS: unique symbol = Symbol("parsedArgs");
+
 // ─── 版本 ─────────────────────────────────────────────────────
+const VERSION = "1.0.0" as const;
 
-const VERSION = "1.0.0";
-
-// ─── CLI 参数解析 ─────────────────────────────────────────────
-
-function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = {
+// ─── 函数重载: parseArgs ──────────────────────────────────────
+function parseArgs(argv: readonly string[]): ParseResult;
+function parseArgs(argv: readonly string[], startIndex: number): ParseResult;
+function parseArgs(
+  argv: readonly string[],
+  startIndex: number = 2,
+): ParseResult {
+  const args: Mutable<CliArgs> = {
     env: "staging",
     skipTest: false,
     dryRun: false,
@@ -42,10 +132,9 @@ function parseArgs(argv: string[]): CliArgs {
     init: false,
   };
 
-  let i = 2; // 跳过 node 和脚本路径
+  let i = startIndex;
   while (i < argv.length) {
     const arg = argv[i];
-
     switch (arg) {
       case "-e":
       case "--env":
@@ -108,28 +197,23 @@ function parseArgs(argv: string[]): CliArgs {
       case "-h":
       case "--help":
         printHelp();
-        process.exit(0);
+        return { kind: "exit", code: 0 };
       case "--version":
         console.log(`auto-deploy v${VERSION}`);
-        process.exit(0);
+        return { kind: "exit", code: 0 };
       default:
         if (!arg.startsWith("-")) {
-          // 位置参数视为环境名
           args.env = arg;
         } else {
-          console.error(`未知选项: ${arg}`);
-          printHelp();
-          process.exit(1);
+          return { kind: "failure", error: `未知选项: ${arg}`, arg };
         }
     }
     i++;
   }
-
-  return args;
+  return { kind: "success", args: args as CliArgs };
 }
 
 // ─── 帮助信息 ─────────────────────────────────────────────────
-
 function printHelp(): void {
   console.log(`
 自动部署工具 v${VERSION}
@@ -169,13 +253,44 @@ function printHelp(): void {
 `);
 }
 
-// ─── 主流程 ───────────────────────────────────────────────────
+// ─── 倒计时工具 ───────────────────────────────────────────────
+async function countdown(seconds: number): Promise<void> {
+  for (let i = seconds; i > 0; i--) {
+    process.stdout.write(`  ${i}...`);
+    await new Promise((r) => setTimeout(r, 1000));
+    process.stdout.write("\r");
+  }
+  process.stdout.write("         \r");
+}
 
+// ─── 生成器: 遍历步骤结果 ─────────────────────────────────────
+function* iterStepResults(
+  results: readonly {
+    task: string;
+    result: { success: boolean; message: string; duration: number };
+  }[],
+): Generator<ParsedArg> {
+  for (const r of results) {
+    yield [
+      r.task,
+      `${r.result.success ? "√" : "×"} ${formatDuration(r.result.duration)} - ${r.result.message}`,
+    ] as const;
+  }
+}
+
+// ─── 主流程 ───────────────────────────────────────────────────
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv);
+  const parseResult = parseArgs(process.argv);
+  if (isParseExit(parseResult)) process.exit(parseResult.code);
+  if (isParseFailure(parseResult)) {
+    console.error(parseResult.error);
+    printHelp();
+    process.exit(1);
+  }
+  const args = parseResult.args;
   const log = new Logger(args.verbose);
 
-  // ─── 初始化配置文件 ──────────────────────────────────────
+  // 初始化配置文件
   if (args.init) {
     const configPath = path.resolve("deploy.config.json");
     if (fs.existsSync(configPath)) {
@@ -187,27 +302,25 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ─── Banner ─────────────────────────────────────────────
+  // Banner
   log.banner("自动化部署工具", VERSION);
 
-  // ─── 加载配置 ────────────────────────────────────────────
+  // 加载配置
   let config: DeployConfig;
-
   if (args.config) {
     const loaded = loadConfigFromFile(args.config);
     if (!loaded) {
       log.error(`配置文件不存在: ${args.config}`);
       process.exit(1);
     }
-    config = loaded;
-    config.environment = args.env;
+    config = { ...loaded, environment: args.env };
     log.info(`从配置文件加载: ${args.config}`);
   } else {
     config = buildConfigFromArgs(args);
     log.info("使用命令行参数构建配置");
   }
 
-  // ─── 配置校验 ────────────────────────────────────────────
+  // 配置校验
   const errors = validateConfig(config);
   if (errors.length > 0) {
     log.error("配置校验失败:");
@@ -215,34 +328,54 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // ─── 显示配置摘要 ───────────────────────────────────────
+  // 显示配置摘要
   log.separator();
   printConfigSummary(config, log);
   log.separator();
 
-  // ─── 确认部署 ────────────────────────────────────────────
+  // 确认部署
   if (!args.dryRun) {
     log.warn(`即将部署 ${config.project} 到 ${config.environment} 环境`);
     log.info("3 秒后开始部署，按 Ctrl+C 取消...");
     await countdown(3);
   }
 
-  // ─── 设置 demo 模式 ─────────────────────────────────────
-  // 本 demo 中默认使用模拟模式，不执行真实命令
-  // 如需真实执行，可设置环境变量 DEPLOY_REAL=1
+  // 设置 demo 模式
   const realMode = process.env["DEPLOY_REAL"] === "1";
   setDemoMode(!realMode);
-
   if (!realMode && !args.dryRun) {
     log.info("当前为 Demo 模式 (模拟执行)，设置 DEPLOY_REAL=1 启用真实执行");
   }
 
-  // ─── 创建并运行流水线 ───────────────────────────────────
+  // 创建并运行流水线
   log.resetTimer();
   const pipeline = createDefaultPipeline(config, log);
-  const result: PipelineResult = await pipeline.run(args.dryRun);
+  const outcome = await pipeline.run(args.dryRun);
 
-  // ─── 输出部署摘要 ───────────────────────────────────────
+  // 处理判别联合结果
+  let result: PipelineResult;
+  if (isPipelineDryRun(outcome)) {
+    result = {
+      success: true,
+      totalSteps: outcome.stages.length,
+      completedSteps: 0,
+      results: [],
+      duration: outcome.duration,
+      rolledBack: false,
+    };
+  } else {
+    result = {
+      success: outcome.kind === "success",
+      totalSteps: outcome.totalSteps,
+      completedSteps: outcome.completedSteps,
+      failedStep: isPipelineFailure(outcome) ? outcome.failedStep : undefined,
+      results: outcome.results,
+      duration: outcome.duration,
+      rolledBack: outcome.rolledBack,
+    };
+  }
+
+  // 输出部署摘要
   log.summary({
     environment: config.environment,
     totalSteps: result.totalSteps,
@@ -251,52 +384,31 @@ async function main(): Promise<void> {
     elapsed: result.duration,
   });
 
-  // ─── 详细步骤耗时 ────────────────────────────────────────
+  // 详细步骤耗时
   if (args.verbose && result.results.length > 0) {
     log.blank();
     log.info("步骤耗时明细:");
-    result.results.forEach(({ task, result: r }) => {
-      const status = r.success ? "√" : "×";
-      log.substep(`${status} ${task}: ${formatDuration(r.duration)} - ${r.message}`);
-    });
+    for (const [task, info] of iterStepResults(
+      result.results.map((r) => ({ task: r[0], result: r[1] })),
+    )) {
+      log.substep(`${info} [${task}]`);
+    }
   }
 
-  // ─── 退出 ───────────────────────────────────────────────
+  // 退出
   if (result.rolledBack) {
     log.warn("部署已回滚，请检查错误后重试");
     process.exit(1);
   }
-
   if (!result.success) {
     log.error("部署失败!");
     process.exit(1);
   }
-
   log.success("部署完成!");
   process.exit(0);
 }
 
-// ─── 倒计时工具 ───────────────────────────────────────────────
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const min = Math.floor(ms / 60000);
-  const sec = ((ms % 60000) / 1000).toFixed(0);
-  return `${min}m${sec}s`;
-}
-
-async function countdown(seconds: number): Promise<void> {
-  for (let i = seconds; i > 0; i--) {
-    process.stdout.write(`  ${i}...`);
-    await new Promise((r) => setTimeout(r, 1000));
-    process.stdout.write("\r");
-  }
-  process.stdout.write("         \r");
-}
-
 // ─── 启动 ─────────────────────────────────────────────────────
-
 main().catch((err) => {
   console.error("部署异常:", err);
   process.exit(1);

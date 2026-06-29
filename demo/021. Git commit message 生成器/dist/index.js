@@ -1,32 +1,5 @@
 #!/usr/bin/env node
 "use strict";
-/**
- * Git Commit Message 生成器
- *
- * 一个使用纯 TypeScript 编写的命令行工具，用于生成符合 Conventional Commits 规范的
- * Git commit message。支持交互式引导、自动分析暂存区变更、历史记录参考等功能。
- *
- * 功能特性：
- *   - 交互式引导生成 commit message
- *   - 自动分析 git diff --staged 暂存区变更
- *   - 智能推荐 commit 类型和范围
- *   - 支持所有 Conventional Commits 标准类型
- *   - 支持 Breaking Change 标识
- *   - 支持自定义 scope
- *   - 查看历史 commit 记录作为参考
- *   - 生成后可直接执行 git commit
- *   - 纯命令行参数模式，可跳过交互
- *
- * 用法：
- *   node dist/index.js                  交互式生成
- *   node dist/index.js -i              交互式生成（显式指定）
- *   node dist/index.js -a              自动分析暂存区并推荐
- *   node dist/index.js -h              查看帮助
- *   node dist/index.js -t feat -s api -m "添加用户登录接口"
- *                                      直接指定类型、范围和描述
- *   node dist/index.js --history       查看最近的 commit 记录
- *   node dist/index.js --commit        生成后直接执行 git commit
- */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -61,354 +34,521 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * Git Commit Message 生成器 (Enhanced TypeScript Edition)
+ *
+ * Demonstrates: Enums, Generics w/ constraints, Discriminated unions, Mapped
+ * types, Conditional types, Template literal types, Type guards, Utility types,
+ * Tuples/readonly tuples, Abstract classes, Function overloads, `as const`,
+ * Custom Error hierarchy, Interfaces (readonly/optional), Index signatures,
+ * `satisfies`, Getters/Setters, Generators/Iterators, Symbols, Optional
+ * chaining & nullish coalescing.
+ *
+ * Core: Conventional/Gitmoji/Custom commit generation from staged changes with
+ * scope/type inference, breaking-change detection, footer/body generation,
+ * validation, statistics, and interactive suggestions.
+ */
 const readline = __importStar(require("readline"));
 const child_process_1 = require("child_process");
-// ========== 常量定义 ==========
-/** Conventional Commits 标准类型列表 */
-const COMMIT_TYPES = [
-    { code: "feat", name: "新功能", description: "新增功能或特性" },
-    { code: "fix", name: "修复", description: "修复 Bug 或问题" },
-    { code: "docs", name: "文档", description: "仅文档变更" },
-    { code: "style", name: "样式", description: "不影响代码含义的格式变更（空格、分号等）" },
-    { code: "refactor", name: "重构", description: "既不新增功能也不修复 Bug 的代码变更" },
-    { code: "perf", name: "性能", description: "提升性能的代码变更" },
-    { code: "test", name: "测试", description: "新增或修正测试代码" },
-    { code: "build", name: "构建", description: "影响构建系统或外部依赖的变更" },
-    { code: "ci", name: "持续集成", description: "CI 配置文件和脚本的变更" },
-    { code: "chore", name: "杂务", description: "其他不修改 src 或 test 的变更" },
-    { code: "revert", name: "回退", description: "回退之前的 commit" },
-];
-/** 文件扩展名到推荐类型的映射 */
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
+// 1. Enums
+var CommitType;
+(function (CommitType) {
+    CommitType["Feat"] = "feat";
+    CommitType["Fix"] = "fix";
+    CommitType["Docs"] = "docs";
+    CommitType["Style"] = "style";
+    CommitType["Refactor"] = "refactor";
+    CommitType["Perf"] = "perf";
+    CommitType["Test"] = "test";
+    CommitType["Build"] = "build";
+    CommitType["Ci"] = "ci";
+    CommitType["Chore"] = "chore";
+    CommitType["Revert"] = "revert";
+})(CommitType || (CommitType = {}));
+var ChangeType;
+(function (ChangeType) {
+    ChangeType["Added"] = "added";
+    ChangeType["Modified"] = "modified";
+    ChangeType["Deleted"] = "deleted";
+    ChangeType["Renamed"] = "renamed";
+})(ChangeType || (ChangeType = {}));
+var BreakingReason;
+(function (BreakingReason) {
+    BreakingReason["Api"] = "\u4E0D\u517C\u5BB9\u7684 API \u53D8\u66F4";
+    BreakingReason["Removal"] = "\u529F\u80FD\u88AB\u79FB\u9664";
+    BreakingReason["Behavior"] = "\u9ED8\u8BA4\u884C\u4E3A\u53D8\u66F4";
+    BreakingReason["Default"] = "\u4E0D\u5411\u540E\u517C\u5BB9\u7684\u53D8\u66F4";
+})(BreakingReason || (BreakingReason = {}));
+var FormatStyle;
+(function (FormatStyle) {
+    FormatStyle["Conventional"] = "conventional";
+    FormatStyle["Gitmoji"] = "gitmoji";
+    FormatStyle["Custom"] = "custom";
+})(FormatStyle || (FormatStyle = {}));
+// 2. Custom Error hierarchy
+class GitError extends Error {
+    constructor(message, code = "GIT_ERROR") {
+        super(message);
+        this.code = code;
+        this.name = "GitError";
+    }
+}
+class NotARepoError extends GitError {
+    constructor() { super("当前目录不在 Git 仓库中", "NOT_A_REPO"); this.name = "NotARepoError"; }
+}
+class NoStagedChangesError extends GitError {
+    constructor() { super("暂存区没有变更", "NO_STAGED_CHANGES"); this.name = "NoStagedChangesError"; }
+}
+class CommitValidationError extends GitError {
+    constructor(message) { super(message, "VALIDATION_ERROR"); this.name = "CommitValidationError"; }
+}
+// 5. `as const` + `satisfies` configuration tables
+const COMMIT_TYPES = {
+    feat: { name: "新功能", description: "新增功能或特性", emoji: "✨" },
+    fix: { name: "修复", description: "修复 Bug 或问题", emoji: "🐛" },
+    docs: { name: "文档", description: "仅文档变更", emoji: "📝" },
+    style: { name: "样式", description: "格式变更（空格、分号等）", emoji: "💄" },
+    refactor: { name: "重构", description: "既不新增功能也不修复 Bug", emoji: "♻️" },
+    perf: { name: "性能", description: "提升性能的代码变更", emoji: "⚡" },
+    test: { name: "测试", description: "新增或修正测试代码", emoji: "✅" },
+    build: { name: "构建", description: "影响构建系统或依赖", emoji: "📦" },
+    ci: { name: "持续集成", description: "CI 配置和脚本变更", emoji: "👷" },
+    chore: { name: "杂务", description: "其他不修改 src/test 的变更", emoji: "🔧" },
+    revert: { name: "回退", description: "回退之前的 commit", emoji: "⏪" },
+};
 const EXTENSION_TYPE_MAP = {
-    ".md": ["docs"],
-    ".txt": ["docs"],
-    ".test.": ["test"],
-    ".spec.": ["test"],
-    ".css": ["style"],
-    ".scss": ["style"],
-    ".less": ["style"],
-    ".yml": ["ci"],
-    ".yaml": ["ci"],
-    ".json": ["chore", "build"],
-    ".lock": ["build"],
+    ".md": [CommitType.Docs], ".txt": [CommitType.Docs],
+    ".css": [CommitType.Style], ".scss": [CommitType.Style], ".less": [CommitType.Style],
+    ".yml": [CommitType.Ci], ".yaml": [CommitType.Ci],
+    ".json": [CommitType.Chore, CommitType.Build], ".lock": [CommitType.Build],
 };
-/** 路径关键词到推荐类型的映射 */
 const PATH_TYPE_MAP = {
-    "test": ["test"],
-    "tests": ["test"],
-    "__tests__": ["test"],
-    "spec": ["test"],
-    "doc": ["docs"],
-    "docs": ["docs"],
-    "style": ["style"],
-    "styles": ["style"],
-    "ci": ["ci"],
-    ".github": ["ci"],
-    "docker": ["build"],
-    "Dockerfile": ["build"],
-    "config": ["chore"],
-    "scripts": ["chore"],
-    "build": ["build"],
-    "webpack": ["build"],
-    "vite": ["build"],
-    "rollup": ["build"],
+    test: CommitType.Test, tests: CommitType.Test, __tests__: CommitType.Test, spec: CommitType.Test,
+    docs: CommitType.Docs, doc: CommitType.Docs,
+    style: CommitType.Style, styles: CommitType.Style,
+    ci: CommitType.Ci, ".github": CommitType.Ci,
+    docker: CommitType.Build, Dockerfile: CommitType.Build,
+    config: CommitType.Chore, scripts: CommitType.Chore,
+    build: CommitType.Build, webpack: CommitType.Build, vite: CommitType.Build, rollup: CommitType.Build,
 };
-// ========== 工具函数 ==========
-/**
- * 创建 readline 接口
- */
-function createReadlineInterface() {
-    return readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    });
-}
-/**
- * 封装 readline question 为 Promise
- */
-function question(rl, prompt) {
-    return new Promise((resolve) => {
-        rl.question(prompt, (answer) => {
-            resolve(answer.trim());
-        });
-    });
-}
-/**
- * 执行 Git 命令并返回输出
- */
-function execGit(args) {
+function runGit(cmd) {
     try {
-        return (0, child_process_1.execSync)(`git ${args}`, {
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-        }).trim();
+        const out = (0, child_process_1.execSync)(cmd, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+        return { ok: true, value: out };
     }
-    catch {
-        return "";
+    catch (e) {
+        return { ok: false, error: new GitError(e instanceof Error ? e.message : String(e), "GIT_CMD") };
     }
 }
-/**
- * 检查当前目录是否在 Git 仓库中
- */
-function isGitRepo() {
-    const result = execGit("rev-parse --is-inside-work-tree");
-    return result === "true";
+function execGit(args) {
+    const r = runGit(`git ${args}`);
+    return r.ok ? r.value : "";
 }
-/**
- * 检查是否存在暂存区变更
- */
-function hasStagedChanges() {
-    const result = execGit("diff --staged --name-only");
-    return result.length > 0;
+// 8. Type guards
+function isCommitType(x) {
+    return typeof x === "string" && Object.values(CommitType).includes(x);
 }
-/**
- * 获取暂存区变更详情
- */
-function getStagedChanges() {
-    const nameStatus = execGit("diff --staged --name-status");
-    const numstat = execGit("diff --staged --numstat");
-    const files = [];
-    let insertions = 0;
-    let deletions = 0;
-    // 解析文件状态
-    if (nameStatus) {
-        for (const line of nameStatus.split("\n")) {
-            if (!line.trim())
-                continue;
-            const parts = line.split("\t");
-            if (parts.length < 2)
-                continue;
-            const statusChar = parts[0][0];
-            const filePath = parts[1];
-            let status;
-            switch (statusChar) {
-                case "A":
-                    status = "added";
-                    break;
-                case "M":
-                    status = "modified";
-                    break;
-                case "D":
-                    status = "deleted";
-                    break;
-                case "R":
-                    status = "renamed";
-                    break;
-                default:
-                    status = "modified";
+function isBreakingChange(p) {
+    return p.isBreaking === true && p.breakingReason !== undefined;
+}
+// 9. Symbols
+const ANALYZE = Symbol("analyze");
+const INTERNAL = Symbol("internal");
+// 10. Abstract Git analyzer + concrete implementation
+class AbstractGitAnalyzer {
+    exec(args) { return execGit(args); }
+    isRepo() { return this.exec("rev-parse --is-inside-work-tree") === "true"; }
+    hasStaged() { return this.exec("diff --staged --name-only").length > 0; }
+    get repoRoot() { return this.exec("rev-parse --show-toplevel") || "."; }
+}
+class StagedChangesAnalyzer extends AbstractGitAnalyzer {
+    constructor() {
+        super(...arguments);
+        this.cache = null;
+    }
+    analyze() {
+        if (this.cache)
+            return this.cache;
+        if (!this.isRepo())
+            throw new NotARepoError();
+        if (!this.hasStaged())
+            throw new NoStagedChangesError();
+        const nameStatus = this.exec("diff --staged --name-status");
+        const numstat = this.exec("diff --staged --numstat");
+        const fileMap = new Map();
+        const byExt = {};
+        if (nameStatus) {
+            for (const line of nameStatus.split("\n")) {
+                if (!line.trim())
+                    continue;
+                const parts = line.split("\t");
+                if (parts.length < 2)
+                    continue;
+                const status = this.toChangeType(parts[0][0]);
+                const filePath = parts[1];
+                fileMap.set(filePath, { status, path: filePath, extension: this.extOf(filePath), additions: 0, deletions: 0 });
             }
-            const ext = filePath.includes(".")
-                ? "." + filePath.split(".").pop().toLowerCase()
-                : "";
-            files.push({ status, path: filePath, extension: ext });
         }
-    }
-    // 解析行数统计
-    if (numstat) {
-        for (const line of numstat.split("\n")) {
-            if (!line.trim())
-                continue;
-            const parts = line.split("\t");
-            if (parts.length < 2)
-                continue;
-            const ins = parseInt(parts[0], 10);
-            const del = parseInt(parts[1], 10);
-            if (!isNaN(ins))
+        let insertions = 0, deletions = 0;
+        if (numstat) {
+            for (const line of numstat.split("\n")) {
+                if (!line.trim())
+                    continue;
+                const parts = line.split("\t");
+                if (parts.length < 3)
+                    continue;
+                const ins = parseInt(parts[0], 10) || 0;
+                const del = parseInt(parts[1], 10) || 0;
+                const filePath = parts[2];
                 insertions += ins;
-            if (!isNaN(del))
                 deletions += del;
-        }
-    }
-    // 生成摘要
-    const added = files.filter((f) => f.status === "added").length;
-    const modified = files.filter((f) => f.status === "modified").length;
-    const deleted = files.filter((f) => f.status === "deleted").length;
-    const renamed = files.filter((f) => f.status === "renamed").length;
-    const parts = [];
-    if (added > 0)
-        parts.push(`新增 ${added} 个文件`);
-    if (modified > 0)
-        parts.push(`修改 ${modified} 个文件`);
-    if (deleted > 0)
-        parts.push(`删除 ${deleted} 个文件`);
-    if (renamed > 0)
-        parts.push(`重命名 ${renamed} 个文件`);
-    const summary = parts.length > 0
-        ? parts.join("，") + `，+${insertions}/-${deletions} 行`
-        : "暂存区无变更";
-    return {
-        files,
-        stats: { filesChanged: files.length, insertions, deletions },
-        summary,
-    };
-}
-/**
- * 获取最近的 commit 记录
- */
-function getRecentCommits(count = 10) {
-    const result = execGit(`log --oneline -${count} --format="%s"`);
-    return result ? result.split("\n").filter(Boolean) : [];
-}
-/**
- * 根据暂存区文件变更推荐 commit 类型
- */
-function suggestCommitType(changes) {
-    const typeScores = {};
-    for (const file of changes.files) {
-        // 根据扩展名推荐
-        for (const [ext, types] of Object.entries(EXTENSION_TYPE_MAP)) {
-            if (ext.startsWith(".") && file.extension === ext) {
-                for (const t of types) {
-                    typeScores[t] = (typeScores[t] || 0) + 2;
-                }
-            }
-            else if (!ext.startsWith(".") && file.path.includes(ext)) {
-                for (const t of types) {
-                    typeScores[t] = (typeScores[t] || 0) + 1;
+                const ext = this.extOf(filePath);
+                const existing = fileMap.get(filePath);
+                if (existing)
+                    fileMap.set(filePath, { ...existing, additions: ins, deletions: del });
+                if (ext) {
+                    const cur = byExt[ext] ?? [0, 0];
+                    byExt[ext] = [cur[0] + ins, cur[1] + del];
                 }
             }
         }
-        // 根据路径关键词推荐
-        for (const [keyword, types] of Object.entries(PATH_TYPE_MAP)) {
-            if (file.path.toLowerCase().includes(keyword.toLowerCase())) {
-                for (const t of types) {
-                    typeScores[t] = (typeScores[t] || 0) + 1.5;
+        const files = Array.from(fileMap.values());
+        const result = {
+            files,
+            stats: { filesChanged: files.length, insertions, deletions, byExtension: byExt },
+            summary: this.buildSummary(files, insertions, deletions),
+        };
+        this.cache = result;
+        return result;
+    }
+    *[ANALYZE]() { for (const f of this.analyze().files)
+        yield f; }
+    *iterFiles() { yield* this[ANALYZE](); }
+    [INTERNAL]() { return this.analyze().files.length; }
+    extOf(p) { return p.includes(".") ? "." + p.split(".").pop().toLowerCase() : ""; }
+    toChangeType(c) {
+        switch (c) {
+            case "A": return ChangeType.Added;
+            case "D": return ChangeType.Deleted;
+            case "R": return ChangeType.Renamed;
+            default: return ChangeType.Modified;
+        }
+    }
+    buildSummary(files, ins, del) {
+        const counts = { [ChangeType.Added]: 0, [ChangeType.Modified]: 0, [ChangeType.Deleted]: 0, [ChangeType.Renamed]: 0 };
+        for (const f of files)
+            counts[f.status]++;
+        const parts = [];
+        if (counts[ChangeType.Added])
+            parts.push(`新增 ${counts[ChangeType.Added]} 个文件`);
+        if (counts[ChangeType.Modified])
+            parts.push(`修改 ${counts[ChangeType.Modified]} 个文件`);
+        if (counts[ChangeType.Deleted])
+            parts.push(`删除 ${counts[ChangeType.Deleted]} 个文件`);
+        if (counts[ChangeType.Renamed])
+            parts.push(`重命名 ${counts[ChangeType.Renamed]} 个文件`);
+        return parts.length ? parts.join("，") + `，+${ins}/-${del} 行` : "暂存区无变更";
+    }
+}
+// Standalone generator function.
+function* iterateFiles(files) { for (const f of files)
+    yield f; }
+function safeAnalyze(analyzer) {
+    if (!execGit("rev-parse --is-inside-work-tree"))
+        return { status: "not-repo" };
+    if (!execGit("diff --staged --name-only"))
+        return { status: "no-staged" };
+    return { status: "ok", changes: analyzer.analyze() };
+}
+// 11. Abstract commit formatter + concrete formatters
+class AbstractCommitFormatter {
+    constructor(parts) {
+        this.parts = parts;
+    }
+    get breakingMark() { return this.parts.isBreaking ? "!" : ""; }
+    get scopePart() { return this.parts.scope ? `(${this.parts.scope})` : ""; }
+}
+class ConventionalFormatter extends AbstractCommitFormatter {
+    get header() { return `${this.parts.type}${this.scopePart}${this.breakingMark}: ${this.parts.subject}`; }
+    format() {
+        const lines = [this.header];
+        if (this.parts.body)
+            lines.push("", this.parts.body);
+        if (this.parts.isBreaking)
+            lines.push("", `BREAKING CHANGE: ${this.parts.breakingReason ?? BreakingReason.Default}`);
+        const footer = this.buildFooter();
+        if (footer)
+            lines.push("", footer);
+        return lines.join("\n");
+    }
+    buildFooter() {
+        const out = [];
+        if (this.parts.closesIssues?.length)
+            out.push(`Closes #${this.parts.closesIssues.join(", #")}`);
+        if (this.parts.coAuthors?.length) {
+            for (const [name, email] of this.parts.coAuthors)
+                out.push(`Co-authored-by: ${name} <${email}>`);
+        }
+        if (this.parts.footer)
+            out.push(this.parts.footer);
+        return out.join("\n");
+    }
+}
+class GitmojiFormatter extends ConventionalFormatter {
+    get header() {
+        const emoji = COMMIT_TYPES[this.parts.type]?.emoji ?? "";
+        return `${emoji} ${this.parts.type}${this.scopePart}${this.breakingMark}: ${this.parts.subject}`;
+    }
+}
+class CustomFormatter extends AbstractCommitFormatter {
+    constructor(parts, template) {
+        super(parts);
+        this.template = template;
+    }
+    get header() {
+        return this.template
+            .replace("{type}", this.parts.type)
+            .replace("{scope}", this.scopePart)
+            .replace("{breaking}", this.breakingMark)
+            .replace("{subject}", this.parts.subject);
+    }
+    format() {
+        const lines = [this.header];
+        if (this.parts.body)
+            lines.push("", this.parts.body);
+        if (this.parts.isBreaking)
+            lines.push("", `BREAKING CHANGE: ${this.parts.breakingReason ?? BreakingReason.Default}`);
+        return lines.join("\n");
+    }
+}
+function createFormatter(parts, style, template) {
+    switch (style) {
+        case FormatStyle.Gitmoji: return new GitmojiFormatter(parts);
+        case FormatStyle.Custom: return new CustomFormatter(parts, template ?? "{type}{scope}{breaking}: {subject}");
+        case FormatStyle.Conventional:
+        default: return new ConventionalFormatter(parts);
+    }
+}
+// 13. Suggester (type / scope inference)
+class CommitSuggester {
+    suggest(changes) {
+        const scores = this.emptyScores();
+        for (const file of changes.files) {
+            for (const [ext, types] of Object.entries(EXTENSION_TYPE_MAP)) {
+                if (ext.startsWith(".") && file.extension === ext) {
+                    for (const t of types)
+                        scores[t] += 2;
+                }
+                else if (!ext.startsWith(".") && file.path.includes(ext)) {
+                    for (const t of types)
+                        scores[t] += 1;
                 }
             }
+            for (const [kw, t] of Object.entries(PATH_TYPE_MAP)) {
+                if (file.path.toLowerCase().includes(kw.toLowerCase()))
+                    scores[t] += 1.5;
+            }
+            if (file.path.includes(".test.") || file.path.includes(".spec.") || file.path.includes("__tests__")) {
+                scores[CommitType.Test] += 3;
+            }
         }
-        // 测试文件的特殊处理
-        if (file.path.includes(".test.") ||
-            file.path.includes(".spec.") ||
-            file.path.includes("__tests__")) {
-            typeScores["test"] = (typeScores["test"] || 0) + 3;
+        const allAdded = changes.files.length > 0 && changes.files.every((f) => f.status === ChangeType.Added);
+        if (allAdded)
+            scores[CommitType.Feat] += 3;
+        const allDeleted = changes.files.length > 0 && changes.files.every((f) => f.status === ChangeType.Deleted);
+        if (allDeleted)
+            scores[CommitType.Refactor] += 2;
+        if (changes.stats.deletions > changes.stats.insertions * 2)
+            scores[CommitType.Refactor] += 1;
+        let bestType = CommitType.Feat, bestScore = 0;
+        for (const [t, s] of Object.entries(scores)) {
+            if (s > bestScore) {
+                bestScore = s;
+                bestType = t;
+            }
         }
+        const total = Object.values(scores).reduce((a, b) => a + b, 0);
+        return { type: bestType, scope: this.inferScope(changes), confidence: total > 0 ? bestScore / total : 0 };
     }
-    // 如果全是新增文件，更倾向于 feat
-    const allAdded = changes.files.length > 0 && changes.files.every((f) => f.status === "added");
-    if (allAdded) {
-        typeScores["feat"] = (typeScores["feat"] || 0) + 3;
+    emptyScores() {
+        const r = {};
+        for (const t of Object.values(CommitType))
+            r[t] = 0;
+        return r;
     }
-    // 如果全是删除文件，更倾向于 refactor
-    const allDeleted = changes.files.length > 0 && changes.files.every((f) => f.status === "deleted");
-    if (allDeleted) {
-        typeScores["refactor"] = (typeScores["refactor"] || 0) + 2;
-    }
-    // 大量删除行可能表示重构
-    if (changes.stats.deletions > changes.stats.insertions * 2) {
-        typeScores["refactor"] = (typeScores["refactor"] || 0) + 1;
-    }
-    // 找出得分最高的类型
-    let bestType = "feat"; // 默认
-    let bestScore = 0;
-    for (const [type, score] of Object.entries(typeScores)) {
-        if (score > bestScore) {
-            bestScore = score;
-            bestType = type;
+    inferScope(changes) {
+        if (changes.files.length === 0)
+            return "";
+        const paths = changes.files.map((f) => f.path);
+        const segments = paths[0].split("/");
+        let commonPrefix = "";
+        for (let i = 0; i < segments.length - 1; i++) {
+            const candidate = segments.slice(0, i + 1).join("/");
+            if (paths.every((p) => p.startsWith(candidate + "/") || p === candidate))
+                commonPrefix = candidate;
+            else
+                break;
         }
-    }
-    // 置信度：归一化到 0-1
-    const totalScore = Object.values(typeScores).reduce((a, b) => a + b, 0);
-    const confidence = totalScore > 0 ? bestScore / totalScore : 0;
-    return { type: bestType, confidence };
-}
-/**
- * 根据暂存区文件路径推荐 scope
- */
-function suggestScope(changes) {
-    if (changes.files.length === 0)
+        if (commonPrefix) {
+            const p = commonPrefix.split("/");
+            return p[p.length - 1];
+        }
+        if (paths.length === 1 && paths[0].includes("/")) {
+            const p = paths[0].split("/");
+            return p[p.length - 2];
+        }
         return "";
-    // 提取公共路径前缀
-    const paths = changes.files.map((f) => f.path);
-    // 查找公共目录前缀
-    const segments = paths[0].split("/");
-    let commonPrefix = "";
-    for (let i = 0; i < segments.length - 1; i++) {
-        const candidate = segments.slice(0, i + 1).join("/");
-        if (paths.every((p) => p.startsWith(candidate + "/") || p === candidate)) {
-            commonPrefix = candidate;
-        }
-        else {
-            break;
-        }
     }
-    if (commonPrefix) {
-        const parts = commonPrefix.split("/");
-        return parts[parts.length - 1];
-    }
-    // 如果只有一个文件，取其直接父目录
-    if (paths.length === 1 && paths[0].includes("/")) {
-        const parts = paths[0].split("/");
-        return parts[parts.length - 2];
-    }
-    return "";
 }
-/**
- * 格式化 commit message
- */
-function formatCommitMessage(type, scope, subject, body, isBreaking, footer) {
-    // 构建头部
-    const breakingMark = isBreaking ? "!" : "";
-    const scopePart = scope ? `(${scope})` : "";
-    const header = `${type}${scopePart}${breakingMark}: ${subject}`;
-    // 构建正文
-    const parts = [header];
-    if (body) {
-        parts.push("", body);
+const VALIDATION_RULES = [
+    { name: "subject-length", check: (m) => m.subject.length > 0 && m.subject.length <= 72, message: "subject 必须在 1-72 字符之间" },
+    { name: "subject-no-period", check: (m) => !m.subject.endsWith("."), message: "subject 不应以句号结尾" },
+    { name: "subject-lowercase", check: (m) => /^[a-z]/.test(m.subject), message: "subject 应以小写字母开头" },
+    { name: "valid-type", check: (m) => isCommitType(m.type), message: "type 必须是合法的 Conventional Commit 类型" },
+];
+class CommitValidator {
+    validate(msg) {
+        const errors = [];
+        for (const rule of VALIDATION_RULES) {
+            if (!rule.check(msg))
+                errors.push(new CommitValidationError(`[${rule.name}] ${rule.message}`));
+        }
+        return errors.length === 0 ? { ok: true, value: true } : { ok: false, error: errors };
     }
-    if (isBreaking && !body?.includes("BREAKING CHANGE")) {
-        parts.push("", "BREAKING CHANGE: 此变更包含不兼容的 API 变更");
-    }
-    if (footer) {
-        parts.push("", footer);
-    }
-    return parts.join("\n");
 }
-// ========== 核心功能 ==========
-/**
- * 显示 commit 类型选择列表
- */
+// 15. CommitBuilder with getters/setters
+class CommitBuilder {
+    constructor() {
+        this._type = CommitType.Feat;
+        this._scope = "";
+        this._subject = "";
+        this._body = "";
+        this._isBreaking = false;
+        this._closesIssues = [];
+        this._coAuthors = [];
+        this._footer = "";
+        this._style = FormatStyle.Conventional;
+        this._template = "{type}{scope}{breaking}: {subject}";
+    }
+    get type() { return this._type; }
+    set type(v) { this._type = v; }
+    get scope() { return this._scope; }
+    set scope(v) { this._scope = v; }
+    get subject() { return this._subject; }
+    set subject(v) {
+        if (v.length > 72)
+            throw new CommitValidationError(`subject 长度 ${v.length} 超过 72 字符`);
+        this._subject = v;
+    }
+    get isBreaking() { return this._isBreaking; }
+    set isBreaking(v) { this._isBreaking = v; }
+    get breakingReason() { return this._breakingReason; }
+    set breakingReason(v) { this._breakingReason = v; }
+    get style() { return this._style; }
+    set style(v) { this._style = v; }
+    forceSubject(v) { this._subject = v; return this; }
+    addClosesIssue(n) { this._closesIssues.push(n); return this; }
+    addCoAuthor(name, email) { this._coAuthors.push([name, email]); return this; }
+    setBody(b) { this._body = b; return this; }
+    setFooter(f) { this._footer = f; return this; }
+    setTemplate(t) { this._template = t; return this; }
+    build() {
+        const parts = {
+            type: this._type,
+            scope: this._scope || undefined,
+            subject: this._subject,
+            body: this._body || undefined,
+            isBreaking: this._isBreaking,
+            breakingReason: this._breakingReason,
+            closesIssues: this._closesIssues,
+            coAuthors: this._coAuthors,
+            footer: this._footer || undefined,
+        };
+        const formatter = this._style === FormatStyle.Gitmoji ? new GitmojiFormatter(parts)
+            : this._style === FormatStyle.Custom ? new CustomFormatter(parts, this._template)
+                : new ConventionalFormatter(parts);
+        const full = formatter.format();
+        return { type: this._type, scope: this._scope, subject: this._subject, body: this._body, isBreaking: this._isBreaking, footer: this._footer, full, style: this._style };
+    }
+}
+// 16. Body generator + grouping helper
+function groupByStatus(files) {
+    const g = { [ChangeType.Added]: [], [ChangeType.Modified]: [], [ChangeType.Deleted]: [], [ChangeType.Renamed]: [] };
+    for (const f of iterateFiles(files))
+        g[f.status].push(f);
+    return g;
+}
+function generateBody(changes, extra) {
+    const lines = [`变更摘要：${changes.summary}`];
+    const grouped = groupByStatus(changes.files);
+    const labels = { [ChangeType.Added]: "新增", [ChangeType.Modified]: "修改", [ChangeType.Deleted]: "删除", [ChangeType.Renamed]: "重命名" };
+    for (const st of Object.values(ChangeType)) {
+        if (grouped[st].length) {
+            lines.push(`${labels[st]}：`);
+            for (const p of grouped[st])
+                lines.push(`  - ${p}`);
+        }
+    }
+    const extEntries = Object.entries(changes.stats.byExtension);
+    if (extEntries.length) {
+        lines.push("按扩展名统计：");
+        for (const [ext, [a, d]] of extEntries)
+            lines.push(`  ${ext || "(无)"}: +${a}/-${d}`);
+    }
+    if (extra)
+        lines.push("", extra);
+    return lines.join("\n");
+}
+// 17. History & readline helpers
+function getRecentCommits(count = 10) {
+    const out = execGit(`log --oneline -${count} --format="%s"`);
+    return out ? out.split("\n").filter(Boolean) : [];
+}
+function createReadlineInterface() {
+    return readline.createInterface({ input: process.stdin, output: process.stdout });
+}
+function question(rl, prompt) {
+    return new Promise((resolve) => { rl.question(prompt, (answer) => resolve(answer.trim())); });
+}
+// 18. Display helpers
 function displayCommitTypes() {
     console.log("\n可用的 Commit 类型：");
-    console.log("─".repeat(50));
-    for (let i = 0; i < COMMIT_TYPES.length; i++) {
-        const t = COMMIT_TYPES[i];
-        console.log(`  ${(i + 1).toString().padStart(2)}. ${t.code.padEnd(10)} ${t.name.padEnd(6)} - ${t.description}`);
-    }
-    console.log("─".repeat(50));
+    console.log("─".repeat(60));
+    Object.values(CommitType).forEach((code, i) => {
+        const meta = COMMIT_TYPES[code];
+        console.log(`  ${(i + 1).toString().padStart(2)}. ${meta.emoji} ${code.padEnd(10)} ${meta.name.padEnd(6)} - ${meta.description}`);
+    });
+    console.log("─".repeat(60));
 }
-/**
- * 显示暂存区变更摘要
- */
 function displayStagedChanges(changes) {
     console.log("\n📋 暂存区变更摘要：");
-    console.log("─".repeat(50));
-    console.log(`  ${changes.summary}`);
-    console.log();
-    // 按状态分组显示文件
-    const grouped = {};
-    for (const file of changes.files) {
-        if (!grouped[file.status])
-            grouped[file.status] = [];
-        grouped[file.status].push(file.path);
-    }
-    const statusLabel = {
-        added: "🆕 新增",
-        modified: "✏️  修改",
-        deleted: "🗑️  删除",
-        renamed: "📝 重命名",
-    };
-    for (const [status, files] of Object.entries(grouped)) {
-        const label = statusLabel[status] || status;
-        console.log(`  ${label}:`);
-        for (const f of files) {
-            console.log(`    - ${f}`);
+    console.log("─".repeat(60));
+    console.log(`  ${changes.summary}\n`);
+    const grouped = groupByStatus(changes.files);
+    const labels = { [ChangeType.Added]: "🆕 新增", [ChangeType.Modified]: "✏️  修改", [ChangeType.Deleted]: "🗑️  删除", [ChangeType.Renamed]: "📝 重命名" };
+    for (const st of Object.values(ChangeType)) {
+        if (grouped[st].length) {
+            console.log(`  ${labels[st]}:`);
+            for (const p of grouped[st])
+                console.log(`    - ${p}`);
         }
     }
-    console.log("─".repeat(50));
+    console.log("─".repeat(60));
 }
-/**
- * 显示历史 commit 记录
- */
+function displayStats(changes) {
+    console.log("\n📊 按文件类型统计：");
+    console.log("─".repeat(60));
+    const entries = Object.entries(changes.stats.byExtension);
+    if (entries.length === 0)
+        console.log("  无统计数据");
+    else
+        for (const [ext, [a, d]] of entries)
+            console.log(`  ${(ext || "(无)").padEnd(10)} +${a} / -${d}`);
+    console.log(`  总计：+${changes.stats.insertions} / -${changes.stats.deletions} (${changes.stats.filesChanged} 个文件)`);
+    console.log("─".repeat(60));
+}
 function displayHistory() {
     const commits = getRecentCommits(10);
     if (commits.length === 0) {
@@ -416,313 +556,322 @@ function displayHistory() {
         return;
     }
     console.log("\n📜 最近的 Commit 记录：");
-    console.log("─".repeat(50));
-    for (const commit of commits) {
-        console.log(`  ${commit}`);
-    }
-    console.log("─".repeat(50));
+    console.log("─".repeat(60));
+    for (const c of commits)
+        console.log(`  ${c}`);
+    console.log("─".repeat(60));
 }
-/**
- * 交互式生成 commit message
- */
+// 19. Interactive generation
 async function interactiveGenerate(shouldAutoAnalyze) {
     const rl = createReadlineInterface();
     try {
-        // 检查是否在 Git 仓库中
-        if (!isGitRepo()) {
+        const analyzer = new StagedChangesAnalyzer();
+        const outcome = safeAnalyze(analyzer);
+        let changes = null;
+        let suggestedType = CommitType.Feat;
+        let suggestedScope = "";
+        if (outcome.status === "not-repo") {
             console.log("❌ 当前目录不在 Git 仓库中！");
             return null;
         }
-        const hasStaged = hasStagedChanges();
-        let changes = null;
-        let suggestedType = "feat";
-        let suggestedScope = "";
-        // 分析暂存区
-        if (hasStaged) {
-            changes = getStagedChanges();
+        if (outcome.status === "ok") {
+            changes = outcome.changes;
             displayStagedChanges(changes);
-            const suggestion = suggestCommitType(changes);
-            suggestedScope = suggestScope(changes);
-            console.log(`\n💡 推荐类型: ${suggestion.type}（置信度: ${Math.round(suggestion.confidence * 100)}%）`);
-            if (suggestedScope) {
+            displayStats(changes);
+            const sug = new CommitSuggester().suggest(changes);
+            suggestedType = sug.type;
+            suggestedScope = sug.scope;
+            console.log(`\n💡 推荐类型: ${sug.type}（置信度: ${Math.round(sug.confidence * 100)}%）`);
+            if (suggestedScope)
                 console.log(`💡 推荐范围: ${suggestedScope}`);
-            }
+            console.log(`💡 共 ${analyzer[INTERNAL]()} 个变更文件`);
         }
         else {
             console.log("⚠️  暂存区没有变更。请先使用 git add 添加文件。");
             console.log("   你仍可以继续生成 commit message，但建议先暂存变更。\n");
         }
-        // 选择 commit 类型
         displayCommitTypes();
-        let type = "";
-        while (!type) {
-            const defaultHint = shouldAutoAnalyze && suggestedType ? ` [${suggestedType}]` : "";
-            const answer = await question(rl, `\n请选择 commit 类型（输入编号或类型代码）${defaultHint}: `);
+        const builder = new CommitBuilder();
+        // Type
+        while (true) {
+            const hint = shouldAutoAnalyze && suggestedType ? ` [${suggestedType}]` : "";
+            const answer = await question(rl, `\n请选择 commit 类型（编号或类型代码）${hint}: `);
             if (!answer && suggestedType) {
-                type = suggestedType;
+                builder.type = suggestedType;
                 break;
             }
             if (!answer) {
                 console.log("请输入有效的类型编号或代码！");
                 continue;
             }
-            // 检查是否为编号
             const num = parseInt(answer, 10);
-            if (!isNaN(num) && num >= 1 && num <= COMMIT_TYPES.length) {
-                type = COMMIT_TYPES[num - 1].code;
+            const entries = Object.values(CommitType);
+            if (!isNaN(num) && num >= 1 && num <= entries.length) {
+                builder.type = entries[num - 1];
                 break;
             }
-            // 检查是否为类型代码
-            const found = COMMIT_TYPES.find((t) => t.code.toLowerCase() === answer.toLowerCase());
-            if (found) {
-                type = found.code;
+            if (isCommitType(answer.toLowerCase())) {
+                builder.type = answer.toLowerCase();
                 break;
             }
-            console.log("无效的类型！请输入编号（1-11）或类型代码。");
+            console.log("无效的类型！请输入编号或类型代码。");
         }
-        // 输入 scope（可选）
-        const scopeDefault = shouldAutoAnalyze && suggestedScope ? ` [${suggestedScope}]` : "";
-        const scopeAnswer = await question(rl, `请输入影响范围 scope（可选，按 Enter 跳过）${scopeDefault}: `);
-        const scope = scopeAnswer || (shouldAutoAnalyze ? suggestedScope : "");
-        // 输入 subject
-        let subject = "";
-        while (!subject) {
-            subject = await question(rl, "请输入简短描述（不超过 72 个字符）: ");
-            if (!subject) {
+        // Scope
+        const scopeHint = shouldAutoAnalyze && suggestedScope ? ` [${suggestedScope}]` : "";
+        builder.scope = (await question(rl, `请输入影响范围 scope（可选）${scopeHint}: `)) || (shouldAutoAnalyze ? suggestedScope : "");
+        // Subject
+        while (true) {
+            const s = await question(rl, "请输入简短描述（不超过 72 个字符）: ");
+            if (!s) {
                 console.log("描述不能为空！");
+                continue;
             }
-            else if (subject.length > 72) {
-                console.log("描述过长，请限制在 72 个字符以内！");
-                subject = "";
+            try {
+                builder.subject = s;
+                break;
+            }
+            catch (e) {
+                console.log(`⚠️  ${e instanceof Error ? e.message : String(e)}`);
             }
         }
-        // 询问是否需要 body
-        const bodyAnswer = await question(rl, "是否添加详细说明？（y/N）: ");
-        let body = "";
-        if (bodyAnswer.toLowerCase() === "y" || bodyAnswer.toLowerCase() === "yes") {
+        // Body
+        const bodyAnswer = (await question(rl, "是否添加详细说明？(y/N): ")).toLowerCase();
+        if (bodyAnswer === "y" || bodyAnswer === "yes") {
             console.log("请输入详细说明（输入空行结束）：");
-            const bodyLines = [];
+            const lines = [];
             let line = await question(rl, "  ");
             while (line !== "") {
-                bodyLines.push(line);
+                lines.push(line);
                 line = await question(rl, "  ");
             }
-            body = bodyLines.join("\n");
+            builder.setBody(lines.join("\n"));
         }
-        // 询问是否有 Breaking Change
-        const breakingAnswer = await question(rl, "是否包含 Breaking Change？（y/N）: ");
-        const isBreaking = breakingAnswer.toLowerCase() === "y" || breakingAnswer.toLowerCase() === "yes";
-        // 询问是否有 footer
-        const footerAnswer = await question(rl, "是否添加 footer（如关联 Issue）？（y/N）: ");
-        let footer = "";
-        if (footerAnswer.toLowerCase() === "y" || footerAnswer.toLowerCase() === "yes") {
-            footer = await question(rl, "请输入 footer（如 Closes #123）: ");
+        else if (changes) {
+            builder.setBody(generateBody(changes));
         }
-        // 生成 commit message
-        const full = formatCommitMessage(type, scope, subject, body, isBreaking, footer);
-        const result = {
-            type,
-            scope,
-            subject,
-            body,
-            isBreaking,
-            footer,
-            full,
-        };
-        return result;
+        // Breaking change
+        const breakingAnswer = (await question(rl, "是否包含 Breaking Change？(y/N): ")).toLowerCase();
+        builder.isBreaking = breakingAnswer === "y" || breakingAnswer === "yes";
+        if (builder.isBreaking) {
+            console.log("可选原因：");
+            const reasons = Object.values(BreakingReason);
+            reasons.forEach((r, i) => console.log(`  ${i + 1}. ${r}`));
+            const r = await question(rl, "选择原因编号（可选）: ");
+            const n = parseInt(r, 10);
+            if (!isNaN(n) && n >= 1 && n <= reasons.length)
+                builder.breakingReason = reasons[n - 1];
+        }
+        // Closes issues
+        const closesAnswer = await question(rl, "是否关联 Issue？输入编号，逗号分隔（可选）: ");
+        if (closesAnswer) {
+            for (const n of closesAnswer.split(/[,\s]+/).map((s) => parseInt(s, 10)).filter((n) => !isNaN(n))) {
+                builder.addClosesIssue(n);
+            }
+        }
+        // Footer
+        const footerAnswer = (await question(rl, "是否添加额外 footer？(y/N): ")).toLowerCase();
+        if (footerAnswer === "y" || footerAnswer === "yes")
+            builder.setFooter(await question(rl, "请输入 footer 内容: "));
+        // Style
+        const styleAnswer = await question(rl, "选择格式 (1=conventional [默认], 2=gitmoji, 3=custom): ");
+        if (styleAnswer === "2")
+            builder.style = FormatStyle.Gitmoji;
+        else if (styleAnswer === "3") {
+            builder.style = FormatStyle.Custom;
+            builder.setTemplate(await question(rl, "自定义模板（含 {type}{scope}{breaking}{subject}）: "));
+        }
+        const msg = builder.build();
+        const result = new CommitValidator().validate(msg);
+        if (!result.ok) {
+            console.log("\n⚠️  验证警告：");
+            for (const e of result.error)
+                console.log(`  - ${e.message}`);
+        }
+        return msg;
     }
     finally {
         rl.close();
     }
 }
-/**
- * 命令行参数模式生成 commit message
- */
-function cliGenerate(type, scope, subject, body, isBreaking, footer) {
-    // 验证类型
-    const validType = COMMIT_TYPES.find((t) => t.code.toLowerCase() === type.toLowerCase());
-    if (!validType) {
-        console.log(`⚠️  未知的 commit 类型: "${type}"，仍将使用该类型。`);
+function cliGenerate(opts) {
+    const builder = new CommitBuilder();
+    if (isCommitType(opts.type.toLowerCase()))
+        builder.type = opts.type.toLowerCase();
+    else {
+        console.log(`⚠️  未知的 commit 类型: "${opts.type}"，将使用 feat。`);
+        builder.type = CommitType.Feat;
     }
-    // 验证描述长度
-    if (subject.length > 72) {
-        console.log("⚠️  描述超过 72 个字符，建议缩短。");
+    builder.scope = opts.scope;
+    try {
+        builder.subject = opts.subject;
     }
-    const full = formatCommitMessage(validType?.code || type, scope, subject, body, isBreaking, footer);
-    return {
-        type: validType?.code || type,
-        scope,
-        subject,
-        body,
-        isBreaking,
-        footer,
-        full,
-    };
+    catch (e) {
+        console.log(`⚠️  ${e instanceof Error ? e.message : String(e)}`);
+        builder.forceSubject(opts.subject);
+    }
+    if (opts.body)
+        builder.setBody(opts.body);
+    builder.isBreaking = opts.breaking;
+    if (opts.footer)
+        builder.setFooter(opts.footer);
+    builder.style = opts.style;
+    return builder.build();
 }
-/**
- * 显示生成的结果
- */
+// 21. Display & commit execution
 function displayResult(result, shouldCommit) {
     console.log("\n✅ 生成的 Commit Message：");
-    console.log("═".repeat(50));
+    console.log("═".repeat(60));
     console.log(result.full);
-    console.log("═".repeat(50));
-    if (shouldCommit && isGitRepo()) {
-        // 使用临时文件方式避免引号转义问题
-        try {
-            const tempFile = `.git/COMMIT_EDITMSG_${Date.now()}`;
-            const fs = require("fs");
-            const path = require("path");
-            const filePath = path.join(execGit("rev-parse --show-toplevel") || ".", tempFile);
-            fs.writeFileSync(filePath, result.full, "utf-8");
-            (0, child_process_1.execSync)(`git commit -F "${filePath}"`, { stdio: "inherit" });
-            fs.unlinkSync(filePath);
-            console.log("\n🎉 Commit 成功！");
-        }
-        catch (err) {
-            console.log(`\n❌ Commit 失败: ${err instanceof Error ? err.message : String(err)}`);
-        }
-    }
-    else if (shouldCommit && !isGitRepo()) {
-        console.log("\n❌ 当前不在 Git 仓库中，无法执行 commit。");
-    }
-    else {
+    console.log("═".repeat(60));
+    if (!shouldCommit) {
         console.log("\n💡 你可以使用以下命令提交：");
-        // 转义双引号
         const escaped = result.full.replace(/"/g, '\\"');
-        console.log(`  git commit -m "${escaped.replace(/\n/g, '\\n')}"`);
+        console.log(`  git commit -m "${escaped.replace(/\n/g, "\\n")}"`);
+        return;
+    }
+    if (!execGit("rev-parse --is-inside-work-tree")) {
+        console.log("\n❌ 当前不在 Git 仓库中，无法执行 commit。");
+        return;
+    }
+    try {
+        const root = execGit("rev-parse --show-toplevel") || ".";
+        const tempFile = path.join(root, `.git/COMMIT_EDITMSG_${Date.now()}`);
+        fs.writeFileSync(tempFile, result.full, "utf-8");
+        (0, child_process_1.execSync)(`git commit -F "${tempFile}"`, { stdio: "inherit" });
+        fs.unlinkSync(tempFile);
+        console.log("\n🎉 Commit 成功！");
+    }
+    catch (err) {
+        console.log(`\n❌ Commit 失败: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
-// ========== 帮助信息 ==========
+function parseArgs(argv) {
+    const opts = {
+        interactive: false, autoAnalyze: false, type: "", scope: "", message: "", body: "",
+        breaking: false, footer: "", commit: false, showHistory: false, showHelp: false,
+        style: FormatStyle.Conventional,
+    };
+    let i = 2;
+    while (i < argv.length) {
+        const arg = argv[i];
+        switch (arg) {
+            case "-i":
+            case "--interactive":
+                opts.interactive = true;
+                break;
+            case "-a":
+            case "--auto":
+                opts.autoAnalyze = true;
+                break;
+            case "-t":
+            case "--type":
+                opts.type = argv[++i] ?? "";
+                break;
+            case "-s":
+            case "--scope":
+                opts.scope = argv[++i] ?? "";
+                break;
+            case "-m":
+            case "--message":
+                opts.message = argv[++i] ?? "";
+                break;
+            case "-b":
+            case "--body":
+                opts.body = argv[++i] ?? "";
+                break;
+            case "-B":
+            case "--breaking":
+                opts.breaking = true;
+                break;
+            case "-f":
+            case "--footer":
+                opts.footer = argv[++i] ?? "";
+                break;
+            case "-c":
+            case "--commit":
+                opts.commit = true;
+                break;
+            case "--gitmoji":
+                opts.style = FormatStyle.Gitmoji;
+                break;
+            case "--custom":
+                opts.style = FormatStyle.Custom;
+                break;
+            case "--history":
+                opts.showHistory = true;
+                break;
+            case "-h":
+            case "--help":
+                opts.showHelp = true;
+                break;
+            default: console.log(`未知选项: ${arg}，使用 --help 查看帮助。`);
+        }
+        i++;
+    }
+    return opts;
+}
+// 23. Help & main
 function printHelp() {
     console.log(`
-Git Commit Message 生成器
+Git Commit Message 生成器 (Enhanced)
 
 用法：
   node dist/index.js [选项]
 
 选项：
-  -i, --interactive    交互式生成（默认模式）
-  -a, --auto           自动分析暂存区并推荐
-  -t, --type <type>    指定 commit 类型（feat/fix/docs/style/refactor/perf/test/build/ci/chore/revert）
+  -i, --interactive    交互式生成（默认）
+  -a, --auto           自动分析暂存区
+  -t, --type <type>    指定 commit 类型
   -s, --scope <scope>  指定影响范围
   -m, --message <msg>  指定简短描述
   -b, --body <body>    指定详细说明
   -B, --breaking       标记为 Breaking Change
   -f, --footer <text>  添加 footer
   -c, --commit         生成后直接执行 git commit
-  --history            查看最近的 commit 记录
-  -h, --help           显示帮助信息
+  --gitmoji            使用 gitmoji 风格
+  --custom             使用自定义模板风格
+  --history            查看最近 commit 记录
+  -h, --help           显示帮助
 
 示例：
-  node dist/index.js                              # 交互式生成
-  node dist/index.js -a                           # 自动分析暂存区
-  node dist/index.js -t feat -m "添加用户登录"     # 指定类型和描述
-  node dist/index.js -t fix -s api -m "修复登录超时"  # 指定类型、范围和描述
-  node dist/index.js -t feat -m "新API" -B        # 包含 Breaking Change
-  node dist/index.js -t feat -m "新API" -c        # 生成后直接 commit
-  node dist/index.js --history                    # 查看 commit 历史
+  node dist/index.js -a                                  # 自动分析
+  node dist/index.js -t feat -m "添加登录"               # 指定类型和描述
+  node dist/index.js -t feat -m "新API" -B -c            # Breaking + commit
+  node dist/index.js -t fix -s api -m "修复超时" --gitmoji
 `);
 }
-function parseArgs(argv) {
-    const options = {
-        interactive: false,
-        autoAnalyze: false,
-        type: "",
-        scope: "",
-        message: "",
-        body: "",
-        breaking: false,
-        footer: "",
-        commit: false,
-        showHistory: false,
-        showHelp: false,
-    };
-    let i = 2; // 跳过 node 和脚本路径
-    while (i < argv.length) {
-        const arg = argv[i];
-        switch (arg) {
-            case "-i":
-            case "--interactive":
-                options.interactive = true;
-                break;
-            case "-a":
-            case "--auto":
-                options.autoAnalyze = true;
-                break;
-            case "-t":
-            case "--type":
-                options.type = argv[++i] || "";
-                break;
-            case "-s":
-            case "--scope":
-                options.scope = argv[++i] || "";
-                break;
-            case "-m":
-            case "--message":
-                options.message = argv[++i] || "";
-                break;
-            case "-b":
-            case "--body":
-                options.body = argv[++i] || "";
-                break;
-            case "-B":
-            case "--breaking":
-                options.breaking = true;
-                break;
-            case "-f":
-            case "--footer":
-                options.footer = argv[++i] || "";
-                break;
-            case "-c":
-            case "--commit":
-                options.commit = true;
-                break;
-            case "--history":
-                options.showHistory = true;
-                break;
-            case "-h":
-            case "--help":
-                options.showHelp = true;
-                break;
-            default:
-                console.log(`未知选项: ${arg}，使用 --help 查看帮助。`);
-        }
-        i++;
-    }
-    return options;
-}
-// ========== 主函数 ==========
 async function main() {
     const options = parseArgs(process.argv);
-    // 显示帮助
     if (options.showHelp) {
         printHelp();
         return;
     }
-    // 显示历史记录
     if (options.showHistory) {
-        if (!isGitRepo()) {
+        if (!execGit("rev-parse --is-inside-work-tree")) {
             console.log("❌ 当前目录不在 Git 仓库中！");
             return;
         }
         displayHistory();
         return;
     }
-    // 判断模式：如果提供了 type 和 message，使用 CLI 模式
-    const isCliMode = options.type && options.message;
-    if (isCliMode) {
-        // CLI 直接生成模式
-        const result = cliGenerate(options.type, options.scope, options.message, options.body, options.breaking, options.footer);
+    if (options.type && options.message) {
+        const result = cliGenerate({
+            type: options.type, scope: options.scope, subject: options.message, body: options.body,
+            breaking: options.breaking, footer: options.footer, style: options.style,
+        });
+        const v = new CommitValidator().validate(result);
+        if (!v.ok) {
+            console.log("⚠️  验证警告：");
+            for (const e of v.error)
+                console.log(`  - ${e.message}`);
+        }
         displayResult(result, options.commit);
     }
     else {
-        // 交互式模式
         const shouldAutoAnalyze = options.autoAnalyze || options.interactive;
         const result = await interactiveGenerate(shouldAutoAnalyze);
-        if (result) {
+        if (result)
             displayResult(result, options.commit);
-        }
     }
 }
 main().catch((err) => {

@@ -11,7 +11,14 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "crawler", "scraper", "news", "html-parser", "cli"],
+  "keywords": [
+    "typescript",
+    "crawler",
+    "scraper",
+    "news",
+    "html-parser",
+    "cli"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

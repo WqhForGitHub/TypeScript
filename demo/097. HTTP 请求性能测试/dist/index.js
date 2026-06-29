@@ -1,39 +1,5 @@
 #!/usr/bin/env node
 "use strict";
-/**
- * HTTP 请求性能测试工具
- *
- * 功能：
- *   - 支持并发 HTTP 请求测试
- *   - 支持 GET / POST / PUT / DELETE 方法
- *   - 实时显示测试进度与吞吐量
- *   - 统计响应时间（Min / Max / Avg / P50 / P90 / P95 / P99）
- *   - 统计吞吐量（Requests/sec）、错误率
- *   - 延迟分布直方图
- *   - 支持自定义请求头和请求体
- *   - 支持超时配置
- *   - 彩色终端输出
- *   - 支持输出 JSON 报告
- *
- * 用法：
- *   node dist/index.js <URL> [选项]
- *
- * 选项：
- *   -n, --requests <num>    总请求数（默认 100）
- *   -c, --concurrency <num> 并发数（默认 10）
- *   -m, --method <method>   HTTP 方法（默认 GET）
- *   -H, --header <k:v>      自定义请求头（可多次指定）
- *   -d, --data <body>       请求体内容
- *   -t, --timeout <ms>      单请求超时时间（默认 10000ms）
- *   --json                  输出 JSON 格式报告
- *   -h, --help              显示帮助信息
- *
- * 示例：
- *   node dist/index.js http://localhost:3000/api
- *   node dist/index.js http://localhost:3000/api -n 500 -c 20
- *   node dist/index.js http://localhost:3000/api -m POST -d '{"key":"value"}'
- *   node dist/index.js http://localhost:3000/api -H "Authorization: Bearer token"
- */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -67,10 +33,64 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * HTTP 请求性能测试工具
+ * 支持并发 HTTP 请求测试、多种 HTTP 方法、实时进度、延迟统计（P50/P90/P95/P99）、
+ * 吞吐量、错误率、延迟直方图、自定义请求头/请求体、超时配置、彩色输出、JSON 报告。
+ *
+ * 用法: node dist/index.js <URL> [选项]
+ *   -n <num> 总请求数   -c <num> 并发数   -m <method> HTTP 方法
+ *   -H <k:v> 请求头     -d <body> 请求体  -t <ms> 超时
+ *   --json JSON 报告    -h 帮助
+ */
 const http = __importStar(require("http"));
 const https = __importStar(require("https"));
 const url_1 = require("url");
+// ==================== 枚举 ====================
+var HttpMethod;
+(function (HttpMethod) {
+    HttpMethod["GET"] = "GET";
+    HttpMethod["POST"] = "POST";
+    HttpMethod["PUT"] = "PUT";
+    HttpMethod["DELETE"] = "DELETE";
+    HttpMethod["PATCH"] = "PATCH";
+    HttpMethod["HEAD"] = "HEAD";
+    HttpMethod["OPTIONS"] = "OPTIONS";
+})(HttpMethod || (HttpMethod = {}));
+var BenchErrorCode;
+(function (BenchErrorCode) {
+    BenchErrorCode["Config"] = "CONFIG_ERROR";
+    BenchErrorCode["Network"] = "NETWORK_ERROR";
+    BenchErrorCode["Timeout"] = "TIMEOUT_ERROR";
+    BenchErrorCode["InvalidUrl"] = "INVALID_URL";
+    BenchErrorCode["UnsupportedMethod"] = "UNSUPPORTED_METHOD";
+})(BenchErrorCode || (BenchErrorCode = {}));
+// ==================== Symbols（唯一属性键） ====================
+const RESULT_META = Symbol("resultMeta");
+const INTERNAL_STATE = Symbol("internalState");
+// ==================== 自定义错误层级（带 code 属性） ====================
+class BenchError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = this.constructor.name;
+        Object.setPrototypeOf(this, new.target.prototype);
+    }
+}
+class ConfigError extends BenchError {
+    constructor(message, code = BenchErrorCode.Config) { super(message); this.code = code; }
+}
+class RequestError extends BenchError {
+    constructor(message, code = BenchErrorCode.Network) { super(message); this.code = code; }
+}
+// ==================== 类型守卫 ====================
+function isSuccessOutcome(o) {
+    return o.kind === "success";
+}
+function isHttpMethod(value) {
+    return Object.values(HttpMethod).includes(value);
+}
 // ==================== 常量 ====================
 const ANSI_RESET = "\x1b[0m";
 const ANSI_BOLD = "\x1b[1m";
@@ -87,58 +107,193 @@ const COLOR = {
     gray: (s) => `${ANSI_DIM}${s}${ANSI_RESET}`,
     bold: (s) => `${ANSI_BOLD}${s}${ANSI_RESET}`,
 };
-// ==================== 工具函数 ====================
-/** 格式化字节数 */
+const DEFAULTS = {
+    totalRequests: 100, concurrency: 10,
+    method: HttpMethod.GET, timeout: 10000,
+};
+const HISTOGRAM_THRESHOLDS = [
+    [50, 5], [200, 20], [500, 50], [2000, 200], [10000, 1000],
+];
+// ==================== 工具函数（泛型约束 + 函数重载） ====================
+function clamp(value, min, max) {
+    if (value < min)
+        return min;
+    if (value > max)
+        return max;
+    return value;
+}
 function formatBytes(bytes) {
     if (bytes < 1024)
         return `${bytes} B`;
-    if (bytes < 1024 * 1024)
+    if (bytes < 1048576)
         return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024)
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    if (bytes < 1073741824)
+        return `${(bytes / 1048576).toFixed(1)} MB`;
+    return `${(bytes / 1073741824).toFixed(2)} GB`;
 }
-/** 格式化毫秒数 */
-function formatMs(ms) {
+function formatLatency(ms, withUnit = true) {
+    if (withUnit === false)
+        return ms;
     if (ms < 1)
         return `${ms.toFixed(3)} ms`;
     if (ms < 1000)
         return `${ms.toFixed(2)} ms`;
     return `${(ms / 1000).toFixed(2)} s`;
 }
-/** 格式化持续时间 */
 function formatDuration(ms) {
     const seconds = Math.floor(ms / 1000);
     if (seconds < 60)
         return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    const remainSeconds = seconds % 60;
-    return `${minutes}m ${remainSeconds}s`;
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
-/** 计算百分位值 */
-function percentile(sorted, p) {
-    if (sorted.length === 0)
-        return 0;
-    const index = (p / 100) * (sorted.length - 1);
-    const lower = Math.floor(index);
-    const upper = Math.ceil(index);
-    if (lower === upper)
-        return sorted[lower];
-    const weight = index - lower;
-    return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+// ==================== 抽象统计计算器（抽象类 + 具体子类） ====================
+class StatCalculator {
+    constructor(values) {
+        this.values = values;
+    }
+    get safeValues() {
+        return this.values.length > 0 ? this.values : [0];
+    }
+}
+class MinCalculator extends StatCalculator {
+    constructor() {
+        super(...arguments);
+        this.name = "Min";
+    }
+    compute() { return Math.min(...this.safeValues); }
+}
+class MaxCalculator extends StatCalculator {
+    constructor() {
+        super(...arguments);
+        this.name = "Max";
+    }
+    compute() { return Math.max(...this.safeValues); }
+}
+class AvgCalculator extends StatCalculator {
+    constructor() {
+        super(...arguments);
+        this.name = "Avg";
+    }
+    compute() {
+        const v = this.safeValues;
+        return v.reduce((s, x) => s + x, 0) / v.length;
+    }
+}
+class PercentileCalculator extends StatCalculator {
+    constructor(values, p, name) {
+        super(values);
+        this.p = p;
+        this.name = name ?? `P${p}`;
+    }
+    compute() {
+        const sorted = [...this.safeValues].sort((a, b) => a - b);
+        if (sorted.length === 0)
+            return 0;
+        const index = (this.p / 100) * (sorted.length - 1);
+        const lower = Math.floor(index);
+        const upper = Math.ceil(index);
+        if (lower === upper)
+            return sorted[lower];
+        const weight = index - lower;
+        return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+    }
+}
+// ==================== 可迭代结果集合（生成器 / 迭代器 / Symbol 键 / Getter） ====================
+class ResultCollection {
+    constructor() {
+        this._results = [];
+        this[_a] = { completed: 0, failed: 0 };
+    }
+    add(result) {
+        this._results.push(result);
+        this[INTERNAL_STATE].completed++;
+        if (result.error || (result.statusCode !== null && result.statusCode >= 400)) {
+            this[INTERNAL_STATE].failed++;
+        }
+    }
+    get length() { return this._results.length; }
+    get completed() { return this[INTERNAL_STATE].completed; }
+    get failed() { return this[INTERNAL_STATE].failed; }
+    get latencies() { return this._results.map((r) => r.duration); }
+    *[(_a = INTERNAL_STATE, Symbol.iterator)]() {
+        for (const r of this._results)
+            yield r;
+    }
+    *successful() {
+        for (const r of this._results)
+            if (!r.error)
+                yield r;
+    }
+}
+// ==================== 配置构建器（Getter / Setter） ====================
+class ConfigBuilder {
+    constructor() {
+        this._url = "";
+        this._method = DEFAULTS.method;
+        this._totalRequests = DEFAULTS.totalRequests;
+        this._concurrency = DEFAULTS.concurrency;
+        this._timeout = DEFAULTS.timeout;
+        this._body = null;
+        this._outputJson = false;
+        this._headers = {};
+    }
+    get url() { return this._url; }
+    set url(v) {
+        if (!v)
+            throw new ConfigError("URL 不能为空", BenchErrorCode.InvalidUrl);
+        let n = v;
+        if (!n.startsWith("http://") && !n.startsWith("https://"))
+            n = `http://${n}`;
+        try {
+            new url_1.URL(n);
+        }
+        catch {
+            throw new ConfigError(`无效的 URL: ${v}`, BenchErrorCode.InvalidUrl);
+        }
+        this._url = n;
+    }
+    get method() { return this._method; }
+    set method(v) {
+        if (!isHttpMethod(v))
+            throw new ConfigError(`不支持的 HTTP 方法: ${v}`, BenchErrorCode.UnsupportedMethod);
+        this._method = v;
+    }
+    get totalRequests() { return this._totalRequests; }
+    set totalRequests(v) {
+        if (v <= 0)
+            throw new ConfigError("请求数必须大于 0");
+        this._totalRequests = Math.floor(v);
+    }
+    get concurrency() { return this._concurrency; }
+    set concurrency(v) {
+        if (v <= 0)
+            throw new ConfigError("并发数必须大于 0");
+        this._concurrency = Math.floor(v);
+    }
+    get timeout() { return this._timeout; }
+    set timeout(v) {
+        if (v <= 0)
+            throw new ConfigError("超时时间必须大于 0");
+        this._timeout = v;
+    }
+    get body() { return this._body; }
+    set body(v) { this._body = v; }
+    get outputJson() { return this._outputJson; }
+    set outputJson(v) { this._outputJson = v; }
+    get headers() { return this._headers; }
+    addHeader(key, value) { this._headers[key] = value; }
+    build() {
+        return {
+            url: this._url, totalRequests: this._totalRequests,
+            concurrency: this._concurrency, method: this._method,
+            headers: { ...this._headers }, body: this._body,
+            timeout: this._timeout, outputJson: this._outputJson,
+        };
+    }
 }
 // ==================== 参数解析 ====================
 function parseArgs(args) {
-    const config = {
-        url: "",
-        totalRequests: 100,
-        concurrency: 10,
-        method: "GET",
-        headers: {},
-        body: null,
-        timeout: 10000,
-        outputJson: false,
-    };
+    const builder = new ConfigBuilder();
     let i = 0;
     while (i < args.length) {
         const arg = args[i];
@@ -151,19 +306,26 @@ function parseArgs(args) {
             case "--requests":
                 i++;
                 if (i < args.length)
-                    config.totalRequests = parseInt(args[i], 10);
+                    builder.totalRequests = parseInt(args[i], 10);
                 break;
             case "-c":
             case "--concurrency":
                 i++;
                 if (i < args.length)
-                    config.concurrency = parseInt(args[i], 10);
+                    builder.concurrency = parseInt(args[i], 10);
                 break;
             case "-m":
             case "--method":
                 i++;
-                if (i < args.length)
-                    config.method = args[i].toUpperCase();
+                if (i < args.length) {
+                    const m = args[i].toUpperCase();
+                    if (!isHttpMethod(m)) {
+                        console.error(COLOR.red(`错误: 不支持的 HTTP 方法: ${m}`));
+                        console.error(COLOR.gray(`支持的方法: ${Object.values(HttpMethod).join(", ")}`));
+                        process.exit(1);
+                    }
+                    builder.method = m;
+                }
                 break;
             case "-H":
             case "--header": {
@@ -171,9 +333,7 @@ function parseArgs(args) {
                 if (i < args.length) {
                     const parts = args[i].split(":");
                     if (parts.length >= 2) {
-                        const key = parts[0].trim();
-                        const value = parts.slice(1).join(":").trim();
-                        config.headers[key] = value;
+                        builder.addHeader(parts[0].trim(), parts.slice(1).join(":").trim());
                     }
                 }
                 break;
@@ -182,49 +342,36 @@ function parseArgs(args) {
             case "--data":
                 i++;
                 if (i < args.length)
-                    config.body = args[i];
+                    builder.body = args[i];
                 break;
             case "-t":
             case "--timeout":
                 i++;
                 if (i < args.length)
-                    config.timeout = parseInt(args[i], 10);
+                    builder.timeout = parseInt(args[i], 10);
                 break;
             case "--json":
-                config.outputJson = true;
+                builder.outputJson = true;
                 break;
             default:
-                if (!arg.startsWith("-")) {
-                    config.url = arg;
-                }
+                if (arg && !arg.startsWith("-"))
+                    builder.url = arg;
                 break;
         }
         i++;
     }
-    // 参数校验
-    if (!config.url) {
-        console.error(COLOR.red("错误: 请提供目标 URL"));
-        console.error(COLOR.gray("使用 --help 查看帮助信息"));
+    try {
+        if (!builder.url) {
+            console.error(COLOR.red("错误: 请提供目标 URL"));
+            console.error(COLOR.gray("使用 --help 查看帮助信息"));
+            process.exit(1);
+        }
+        return builder.build();
+    }
+    catch (e) {
+        console.error(COLOR.red(`错误: ${e instanceof BenchError ? e.message : String(e)}`));
         process.exit(1);
     }
-    if (!config.url.startsWith("http://") && !config.url.startsWith("https://")) {
-        config.url = `http://${config.url}`;
-    }
-    if (config.totalRequests <= 0) {
-        console.error(COLOR.red("错误: 请求数必须大于 0"));
-        process.exit(1);
-    }
-    if (config.concurrency <= 0) {
-        console.error(COLOR.red("错误: 并发数必须大于 0"));
-        process.exit(1);
-    }
-    const validMethods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
-    if (!validMethods.includes(config.method)) {
-        console.error(COLOR.red(`错误: 不支持的 HTTP 方法: ${config.method}`));
-        console.error(COLOR.gray(`支持的方法: ${validMethods.join(", ")}`));
-        process.exit(1);
-    }
-    return config;
 }
 function printHelp() {
     console.log(`
@@ -252,20 +399,27 @@ ${COLOR.cyan("示例:")}
 `);
 }
 // ==================== HTTP 请求 ====================
-/** 发送单次 HTTP 请求并返回结果 */
-function sendRequest(config) {
+/** 发送单次 HTTP 请求并返回结果（判别联合 + 类型守卫处理不同结果） */
+function sendRequest(config, index) {
     return new Promise((resolve) => {
         const startTime = performance.now();
         let bytesReceived = 0;
         let resolved = false;
-        const done = (result) => {
+        const finalize = (outcome) => {
             if (resolved)
                 return;
             resolved = true;
-            resolve({
-                ...result,
-                timestamp: Date.now(),
-            });
+            // 使用类型守卫在访问变体特有属性前进行窄化
+            const result = {
+                statusCode: isSuccessOutcome(outcome)
+                    ? outcome.statusCode
+                    : outcome.kind === "error" ? outcome.statusCode : null,
+                duration: outcome.duration,
+                error: isSuccessOutcome(outcome) ? null : outcome.error,
+                bytesReceived: isSuccessOutcome(outcome) ? outcome.bytesReceived : bytesReceived,
+                timestamp: Date.now(), outcome, [RESULT_META]: { index },
+            };
+            resolve(result);
         };
         try {
             const parsedUrl = new url_1.URL(config.url);
@@ -276,77 +430,45 @@ function sendRequest(config) {
                 port: parsedUrl.port || (isHttps ? 443 : 80),
                 path: parsedUrl.pathname + parsedUrl.search,
                 method: config.method,
-                headers: {
-                    "User-Agent": "HttpBench/1.0",
-                    Accept: "*/*",
-                    ...config.headers,
-                },
+                headers: { "User-Agent": "HttpBench/1.0", Accept: "*/*", ...config.headers },
                 timeout: config.timeout,
             };
-            // 如果有请求体，添加 Content-Length
             if (config.body) {
                 const bodyBuffer = Buffer.from(config.body);
                 const headers = options.headers;
                 headers["Content-Length"] = String(bodyBuffer.length);
-                if (!headers["Content-Type"]) {
+                if (!headers["Content-Type"])
                     headers["Content-Type"] = "application/json";
-                }
             }
             const req = httpModule.request(options, (res) => {
-                res.on("data", (chunk) => {
-                    bytesReceived += chunk.length;
-                });
+                res.on("data", (chunk) => { bytesReceived += chunk.length; });
                 res.on("end", () => {
                     const duration = performance.now() - startTime;
-                    done({
-                        statusCode: res.statusCode ?? null,
-                        duration,
-                        error: null,
-                        bytesReceived,
-                    });
+                    const sc = res.statusCode ?? 0;
+                    if (sc >= 400) {
+                        finalize({ kind: "error", duration, error: new RequestError(`HTTP ${sc}`).message, statusCode: res.statusCode ?? null });
+                    }
+                    else {
+                        finalize({ kind: "success", statusCode: sc, duration, bytesReceived });
+                    }
                 });
                 res.on("error", (err) => {
-                    const duration = performance.now() - startTime;
-                    done({
-                        statusCode: res.statusCode ?? null,
-                        duration,
-                        error: err.message,
-                        bytesReceived,
-                    });
+                    finalize({ kind: "error", duration: performance.now() - startTime, error: err.message, statusCode: res.statusCode ?? null });
                 });
             });
             req.on("error", (err) => {
-                const duration = performance.now() - startTime;
-                done({
-                    statusCode: null,
-                    duration,
-                    error: err.message,
-                    bytesReceived,
-                });
+                finalize({ kind: "error", duration: performance.now() - startTime, error: err.message, statusCode: null });
             });
             req.on("timeout", () => {
                 req.destroy();
-                const duration = performance.now() - startTime;
-                done({
-                    statusCode: null,
-                    duration,
-                    error: "ETIMEDOUT",
-                    bytesReceived,
-                });
+                finalize({ kind: "timeout", duration: performance.now() - startTime, error: "ETIMEDOUT" });
             });
-            if (config.body) {
+            if (config.body)
                 req.write(config.body);
-            }
             req.end();
         }
         catch (err) {
-            const duration = performance.now() - startTime;
-            done({
-                statusCode: null,
-                duration,
-                error: err instanceof Error ? err.message : String(err),
-                bytesReceived,
-            });
+            finalize({ kind: "error", duration: performance.now() - startTime, error: err instanceof Error ? err.message : String(err), statusCode: null });
         }
     });
 }
@@ -354,41 +476,25 @@ function sendRequest(config) {
 class HttpBenchmarker {
     constructor(config) {
         this.config = config;
-        this.results = [];
-        this.completedCount = 0;
-        this.failedCount = 0;
+        this.results = new ResultCollection();
         this.startTime = 0;
-        this.lastProgressTime = 0;
         this.progressInterval = null;
     }
-    /** 运行性能测试 */
     async run() {
         this.startTime = performance.now();
-        this.lastProgressTime = this.startTime;
         if (!this.config.outputJson) {
             this.printBanner();
-        }
-        // 启动进度更新定时器
-        if (!this.config.outputJson) {
             this.progressInterval = setInterval(() => this.updateProgress(), 200);
         }
-        // 并发执行请求
         const { totalRequests, concurrency } = this.config;
         let nextIndex = 0;
         const worker = async () => {
             while (nextIndex < totalRequests) {
-                const index = nextIndex++;
-                const result = await sendRequest(this.config);
-                this.results.push(result);
-                this.completedCount++;
-                if (result.error || (result.statusCode !== null && result.statusCode >= 400)) {
-                    this.failedCount++;
-                }
+                this.results.add(await sendRequest(this.config, nextIndex++));
             }
         };
         const workerCount = Math.min(concurrency, totalRequests);
         const workers = Array.from({ length: workerCount }, () => worker());
-        // 优雅退出
         process.on("SIGINT", () => {
             if (this.progressInterval)
                 clearInterval(this.progressInterval);
@@ -397,266 +503,210 @@ class HttpBenchmarker {
             process.exit(0);
         });
         await Promise.all(workers);
-        // 停止进度更新
-        if (this.progressInterval) {
+        if (this.progressInterval)
             clearInterval(this.progressInterval);
-        }
-        // 输出结果
-        if (this.config.outputJson) {
+        if (this.config.outputJson)
             this.printJsonResults();
-        }
-        else {
+        else
             this.printResults();
-        }
     }
-    /** 打印启动横幅 */
     printBanner() {
-        const parsedUrl = new url_1.URL(this.config.url);
-        console.log("");
-        console.log(COLOR.bold(COLOR.cyan("  ╔══════════════════════════════════════════╗")));
-        console.log(COLOR.bold(COLOR.cyan("  ║     HTTP 请求性能测试工具 v1.0.0        ║")));
-        console.log(COLOR.bold(COLOR.cyan("  ╚══════════════════════════════════════════╝")));
-        console.log("");
-        console.log(`  ${COLOR.bold("目标 URL:")}   ${COLOR.cyan(this.config.url)}`);
-        console.log(`  ${COLOR.bold("主机:")}       ${COLOR.cyan(parsedUrl.hostname)}${parsedUrl.port ? `:${parsedUrl.port}` : ""}`);
-        console.log(`  ${COLOR.bold("方法:")}       ${COLOR.green(this.config.method)}`);
-        console.log(`  ${COLOR.bold("总请求数:")}   ${COLOR.bold(String(this.config.totalRequests))}`);
-        console.log(`  ${COLOR.bold("并发数:")}     ${COLOR.bold(String(this.config.concurrency))}`);
-        console.log(`  ${COLOR.bold("超时时间:")}   ${this.config.timeout}ms`);
-        if (Object.keys(this.config.headers).length > 0) {
-            const headerStrs = Object.entries(this.config.headers)
-                .map(([k, v]) => `${k}: ${v}`);
-            console.log(`  ${COLOR.bold("自定义头:")}   ${headerStrs.join("; ")}`);
-        }
-        if (this.config.body) {
-            const preview = this.config.body.length > 50
-                ? this.config.body.slice(0, 50) + "..."
-                : this.config.body;
-            console.log(`  ${COLOR.bold("请求体:")}     ${COLOR.gray(preview)}`);
-        }
-        console.log("");
-        console.log(COLOR.gray("  测试进行中..."));
-        console.log("");
+        const u = new url_1.URL(this.config.url);
+        const hdrs = Object.entries(this.config.headers);
+        const headers = hdrs.length ? `\n  ${COLOR.bold("自定义头:")}   ${hdrs.map(([k, v]) => `${k}: ${v}`).join("; ")}` : "";
+        const body = this.config.body
+            ? `\n  ${COLOR.bold("请求体:")}     ${COLOR.gray(this.config.body.length > 50 ? this.config.body.slice(0, 50) + "..." : this.config.body)}`
+            : "";
+        console.log(`
+${COLOR.bold(COLOR.cyan("  ╔══════════════════════════════════════════╗"))}
+${COLOR.bold(COLOR.cyan("  ║     HTTP 请求性能测试工具 v1.0.0        ║"))}
+${COLOR.bold(COLOR.cyan("  ╚══════════════════════════════════════════╝"))}
+
+  ${COLOR.bold("目标 URL:")}   ${COLOR.cyan(this.config.url)}
+  ${COLOR.bold("主机:")}       ${COLOR.cyan(u.hostname)}${u.port ? `:${u.port}` : ""}
+  ${COLOR.bold("方法:")}       ${COLOR.green(this.config.method)}
+  ${COLOR.bold("总请求数:")}   ${COLOR.bold(String(this.config.totalRequests))}
+  ${COLOR.bold("并发数:")}     ${COLOR.bold(String(this.config.concurrency))}
+  ${COLOR.bold("超时时间:")}   ${this.config.timeout}ms${headers}${body}
+
+${COLOR.gray("  测试进行中...")}
+`);
     }
-    /** 更新进度条 */
     updateProgress() {
         const elapsed = performance.now() - this.startTime;
-        const rps = this.completedCount > 0 ? (this.completedCount / (elapsed / 1000)).toFixed(1) : "0.0";
-        const percent = ((this.completedCount / this.config.totalRequests) * 100).toFixed(1);
+        const completed = this.results.completed;
+        const failed = this.results.failed;
+        const rps = completed > 0 ? (completed / (elapsed / 1000)).toFixed(1) : "0.0";
+        const percent = ((completed / this.config.totalRequests) * 100).toFixed(1);
         const barWidth = 30;
-        const filled = Math.round((this.completedCount / this.config.totalRequests) * barWidth);
+        const filled = Math.round((completed / this.config.totalRequests) * barWidth);
         const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
         process.stdout.write(`${ANSI_CLEAR_LINE}${ANSI_CURSOR_LEFT}  ${COLOR.cyan(bar)} ${percent}% | ` +
-            `${COLOR.bold(String(this.completedCount))}/${this.config.totalRequests} | ` +
+            `${COLOR.bold(String(completed))}/${this.config.totalRequests} | ` +
             `${COLOR.green(rps)} req/s | ` +
-            `${this.failedCount > 0 ? COLOR.red(`${this.failedCount} failed`) : COLOR.green("0 failed")}`);
+            `${failed > 0 ? COLOR.red(`${failed} failed`) : COLOR.green("0 failed")}`);
     }
-    /** 计算统计数据 */
     computeStats() {
-        const latencies = this.results
-            .map((r) => r.duration)
-            .sort((a, b) => a - b);
+        const latencies = this.results.latencies.sort((a, b) => a - b);
         const totalDuration = performance.now() - this.startTime;
-        const completedRequests = this.results.filter((r) => !r.error).length;
-        const failedRequests = this.results.filter((r) => r.error !== null).length;
+        let completedRequests = 0;
+        let failedRequests = 0;
         const statusCodes = new Map();
         const errors = new Map();
         let totalBytes = 0;
         for (const result of this.results) {
+            if (result.error)
+                failedRequests++;
+            else
+                completedRequests++;
             if (result.statusCode !== null) {
                 statusCodes.set(result.statusCode, (statusCodes.get(result.statusCode) ?? 0) + 1);
             }
-            if (result.error) {
+            if (result.error)
                 errors.set(result.error, (errors.get(result.error) ?? 0) + 1);
-            }
             totalBytes += result.bytesReceived;
         }
-        const minLatency = latencies.length > 0 ? latencies[0] : 0;
-        const maxLatency = latencies.length > 0 ? latencies[latencies.length - 1] : 0;
-        const avgLatency = latencies.length > 0
-            ? latencies.reduce((sum, l) => sum + l, 0) / latencies.length
-            : 0;
-        const p50 = percentile(latencies, 50);
-        const p90 = percentile(latencies, 90);
-        const p95 = percentile(latencies, 95);
-        const p99 = percentile(latencies, 99);
+        // 通过抽象计算器子类计算各项统计
         return {
             totalRequests: this.config.totalRequests,
-            completedRequests,
-            failedRequests,
-            totalDuration,
+            completedRequests, failedRequests, totalDuration,
             requestsPerSec: completedRequests / (totalDuration / 1000),
-            totalBytes,
-            statusCodes,
-            errors,
-            latencies,
-            minLatency,
-            maxLatency,
-            avgLatency,
-            p50,
-            p90,
-            p95,
-            p99,
+            totalBytes, statusCodes, errors, latencies,
+            minLatency: new MinCalculator(latencies).compute(),
+            maxLatency: new MaxCalculator(latencies).compute(),
+            avgLatency: new AvgCalculator(latencies).compute(),
+            p50: new PercentileCalculator(latencies, 50).compute(),
+            p90: new PercentileCalculator(latencies, 90).compute(),
+            p95: new PercentileCalculator(latencies, 95).compute(),
+            p99: new PercentileCalculator(latencies, 99).compute(),
         };
     }
-    /** 打印文本格式结果 */
     printResults() {
-        const stats = this.computeStats();
-        console.log("");
-        console.log(COLOR.cyan("  ══════════════════════════════════════════"));
-        console.log(COLOR.bold("  测试结果摘要"));
-        console.log(COLOR.cyan("  ══════════════════════════════════════════"));
-        console.log("");
-        // 基本统计
-        console.log(`  ${COLOR.bold("总请求数:")}     ${stats.totalRequests}`);
-        console.log(`  ${COLOR.bold("成功请求:")}     ${COLOR.green(String(stats.completedRequests))}`);
-        console.log(`  ${COLOR.bold("失败请求:")}     ${stats.failedRequests > 0 ? COLOR.red(String(stats.failedRequests)) : COLOR.green("0")}`);
-        console.log(`  ${COLOR.bold("错误率:")}       ${stats.failedRequests > 0 ? COLOR.red(`${((stats.failedRequests / stats.totalRequests) * 100).toFixed(2)}%`) : COLOR.green("0.00%")}`);
-        console.log("");
-        // 性能指标
-        console.log(COLOR.cyan("  ── 性能指标 ──────────────────────────────"));
-        console.log(`  ${COLOR.bold("吞吐量:")}       ${COLOR.green(stats.requestsPerSec.toFixed(2))} req/s`);
-        console.log(`  ${COLOR.bold("总耗时:")}       ${formatDuration(stats.totalDuration)} (${stats.totalDuration.toFixed(0)} ms)`);
-        console.log(`  ${COLOR.bold("数据传输:")}     ${formatBytes(stats.totalBytes)}`);
-        console.log(`  ${COLOR.bold("平均吞吐:")}     ${formatBytes(stats.totalBytes / (stats.totalDuration / 1000))}/s`);
-        console.log("");
-        // 延迟分布
-        console.log(COLOR.cyan("  ── 延迟分布 ──────────────────────────────"));
-        console.log(`  ${COLOR.bold("最小值:")}       ${formatMs(stats.minLatency)}`);
-        console.log(`  ${COLOR.bold("最大值:")}       ${formatMs(stats.maxLatency)}`);
-        console.log(`  ${COLOR.bold("平均值:")}       ${formatMs(stats.avgLatency)}`);
-        console.log(`  ${COLOR.bold("P50:")}          ${formatMs(stats.p50)}`);
-        console.log(`  ${COLOR.bold("P90:")}          ${COLOR.yellow(formatMs(stats.p90))}`);
-        console.log(`  ${COLOR.bold("P95:")}          ${COLOR.yellow(formatMs(stats.p95))}`);
-        console.log(`  ${COLOR.bold("P99:")}          ${COLOR.red(formatMs(stats.p99))}`);
-        console.log("");
-        // 延迟直方图
-        this.printLatencyHistogram(stats);
-        // 状态码分布
-        if (stats.statusCodes.size > 0) {
-            console.log(COLOR.cyan("  ── 状态码分布 ────────────────────────────"));
-            const sortedCodes = [...stats.statusCodes.entries()].sort(([a], [b]) => a - b);
-            for (const [code, count] of sortedCodes) {
-                const colorFn = code < 300
-                    ? COLOR.green
-                    : code < 400
-                        ? COLOR.cyan
-                        : code < 500
-                            ? COLOR.yellow
-                            : COLOR.red;
-                const percent = ((count / stats.totalRequests) * 100).toFixed(1);
-                console.log(`  ${colorFn(String(code))}  ${count.toString().padStart(6)} 次  (${percent}%)`);
-            }
-            console.log("");
+        const s = this.computeStats();
+        const failed = s.failedRequests > 0 ? COLOR.red(String(s.failedRequests)) : COLOR.green("0");
+        const errRate = s.failedRequests > 0
+            ? COLOR.red(`${((s.failedRequests / s.totalRequests) * 100).toFixed(2)}%`)
+            : COLOR.green("0.00%");
+        console.log(`
+${COLOR.cyan("  ══════════════════════════════════════════")}
+${COLOR.bold("  测试结果摘要")}
+${COLOR.cyan("  ══════════════════════════════════════════")}
+
+  ${COLOR.bold("总请求数:")}     ${s.totalRequests}
+  ${COLOR.bold("成功请求:")}     ${COLOR.green(String(s.completedRequests))}
+  ${COLOR.bold("失败请求:")}     ${failed}
+  ${COLOR.bold("错误率:")}       ${errRate}
+
+${COLOR.cyan("  ── 性能指标 ──────────────────────────────")}
+  ${COLOR.bold("吞吐量:")}       ${COLOR.green(s.requestsPerSec.toFixed(2))} req/s
+  ${COLOR.bold("总耗时:")}       ${formatDuration(s.totalDuration)} (${s.totalDuration.toFixed(0)} ms)
+  ${COLOR.bold("数据传输:")}     ${formatBytes(s.totalBytes)}
+  ${COLOR.bold("平均吞吐:")}     ${formatBytes(s.totalBytes / (s.totalDuration / 1000))}/s
+
+${COLOR.cyan("  ── 延迟分布 ──────────────────────────────")}
+  ${COLOR.bold("最小值:")}       ${formatLatency(s.minLatency)}
+  ${COLOR.bold("最大值:")}       ${formatLatency(s.maxLatency)}
+  ${COLOR.bold("平均值:")}       ${formatLatency(s.avgLatency)}
+  ${COLOR.bold("P50:")}          ${formatLatency(s.p50)}
+  ${COLOR.bold("P90:")}          ${COLOR.yellow(formatLatency(s.p90))}
+  ${COLOR.bold("P95:")}          ${COLOR.yellow(formatLatency(s.p95))}
+  ${COLOR.bold("P99:")}          ${COLOR.red(formatLatency(s.p99))}
+`);
+        this.printLatencyHistogram(s);
+        if (s.statusCodes.size > 0) {
+            const lines = [...s.statusCodes.entries()].sort(([a], [b]) => a - b)
+                .map(([code, count]) => {
+                const colorFn = code < 300 ? COLOR.green : code < 400 ? COLOR.cyan : code < 500 ? COLOR.yellow : COLOR.red;
+                const percent = ((count / s.totalRequests) * 100).toFixed(1);
+                return `  ${colorFn(String(code))}  ${count.toString().padStart(6)} 次  (${percent}%)`;
+            }).join("\n");
+            console.log(`${COLOR.cyan("  ── 状态码分布 ────────────────────────────")}\n${lines}\n`);
         }
-        // 错误统计
-        if (stats.errors.size > 0) {
-            console.log(COLOR.cyan("  ── 错误统计 ──────────────────────────────"));
-            for (const [error, count] of stats.errors.entries()) {
-                console.log(`  ${COLOR.red(error)}  ×${count}`);
-            }
-            console.log("");
+        if (s.errors.size > 0) {
+            const lines = [...s.errors.entries()]
+                .map(([error, count]) => `  ${COLOR.red(error)}  ×${count}`).join("\n");
+            console.log(`${COLOR.cyan("  ── 错误统计 ──────────────────────────────")}\n${lines}\n`);
         }
     }
-    /** 打印延迟直方图 */
     printLatencyHistogram(stats) {
         if (stats.latencies.length === 0)
             return;
-        console.log(COLOR.cyan("  ── 延迟直方图 ────────────────────────────"));
-        // 定义区间
-        const ranges = this.buildHistogramRanges(stats);
-        for (const range of ranges) {
-            const count = stats.latencies.filter((l) => l >= range.min && l < range.max).length;
+        const ranges = this.buildHistogramRanges(stats.maxLatency);
+        const counts = ranges.map((r) => stats.latencies.filter((l) => l >= r[0] && l < r[1]).length);
+        const maxCount = Math.max(...counts);
+        const maxBarWidth = 30;
+        const lines = [];
+        for (let i = 0; i < ranges.length; i++) {
+            const count = counts[i];
             if (count === 0)
                 continue;
-            const maxBarWidth = 30;
-            const maxCount = Math.max(...ranges.map((r) => stats.latencies.filter((l) => l >= r.min && l < r.max).length));
             const barWidth = maxCount > 0 ? Math.round((count / maxCount) * maxBarWidth) : 0;
-            const bar = "▓".repeat(barWidth);
             const percent = ((count / stats.latencies.length) * 100).toFixed(1);
-            const label = range.label.padEnd(12);
-            console.log(`  ${COLOR.gray(label)} ${COLOR.cyan(bar)} ${count} (${percent}%)`);
+            lines.push(`  ${COLOR.gray(ranges[i][2].padEnd(12))} ${COLOR.cyan("▓".repeat(barWidth))} ${count} (${percent}%)`);
         }
-        console.log("");
+        if (lines.length > 0) {
+            console.log(`${COLOR.cyan("  ── 延迟直方图 ────────────────────────────")}\n${lines.join("\n")}\n`);
+        }
     }
-    /** 构建直方图区间 */
-    buildHistogramRanges(stats) {
+    buildHistogramRanges(max) {
         const ranges = [];
-        const max = stats.maxLatency;
-        // 根据最大延迟动态选择区间大小
-        let bucketSize;
-        if (max <= 50)
-            bucketSize = 5;
-        else if (max <= 200)
-            bucketSize = 20;
-        else if (max <= 500)
-            bucketSize = 50;
-        else if (max <= 2000)
-            bucketSize = 200;
-        else if (max <= 10000)
-            bucketSize = 1000;
-        else
-            bucketSize = 5000;
+        let bucketSize = 5000;
+        for (const [threshold, size] of HISTOGRAM_THRESHOLDS) {
+            if (max <= threshold) {
+                bucketSize = size;
+                break;
+            }
+        }
         let current = 0;
         while (current < max) {
             const next = current + bucketSize;
             const minLabel = current < 1000 ? `${current}ms` : `${(current / 1000).toFixed(1)}s`;
             const maxLabel = next < 1000 ? `${next}ms` : `${(next / 1000).toFixed(1)}s`;
-            ranges.push({
-                min: current,
-                max: next,
-                label: `${minLabel}-${maxLabel}`,
-            });
+            ranges.push([current, next, `${minLabel}-${maxLabel}`]);
             current = next;
         }
         return ranges;
     }
-    /** 输出 JSON 格式结果 */
     printJsonResults() {
-        const stats = this.computeStats();
+        const s = this.computeStats();
         const statusCodesObj = {};
-        for (const [code, count] of stats.statusCodes.entries()) {
+        for (const [code, count] of s.statusCodes.entries())
             statusCodesObj[code] = count;
-        }
         const errorsObj = {};
-        for (const [error, count] of stats.errors.entries()) {
+        for (const [error, count] of s.errors.entries())
             errorsObj[error] = count;
-        }
         const output = {
-            url: this.config.url,
-            method: this.config.method,
-            concurrency: this.config.concurrency,
-            totalRequests: stats.totalRequests,
-            completedRequests: stats.completedRequests,
-            failedRequests: stats.failedRequests,
-            errorRate: ((stats.failedRequests / stats.totalRequests) * 100).toFixed(2) + "%",
-            totalDurationMs: stats.totalDuration,
-            requestsPerSec: parseFloat(stats.requestsPerSec.toFixed(2)),
-            totalBytes: stats.totalBytes,
+            url: this.config.url, method: this.config.method,
+            concurrency: this.config.concurrency, totalRequests: s.totalRequests,
+            completedRequests: s.completedRequests, failedRequests: s.failedRequests,
+            errorRate: ((s.failedRequests / s.totalRequests) * 100).toFixed(2) + "%",
+            totalDurationMs: s.totalDuration,
+            requestsPerSec: parseFloat(s.requestsPerSec.toFixed(2)),
+            totalBytes: s.totalBytes,
             latency: {
-                min: parseFloat(stats.minLatency.toFixed(3)),
-                max: parseFloat(stats.maxLatency.toFixed(3)),
-                avg: parseFloat(stats.avgLatency.toFixed(3)),
-                p50: parseFloat(stats.p50.toFixed(3)),
-                p90: parseFloat(stats.p90.toFixed(3)),
-                p95: parseFloat(stats.p95.toFixed(3)),
-                p99: parseFloat(stats.p99.toFixed(3)),
+                min: parseFloat(s.minLatency.toFixed(3)),
+                max: parseFloat(s.maxLatency.toFixed(3)),
+                avg: parseFloat(s.avgLatency.toFixed(3)),
+                p50: parseFloat(s.p50.toFixed(3)),
+                p90: parseFloat(s.p90.toFixed(3)),
+                p95: parseFloat(s.p95.toFixed(3)),
+                p99: parseFloat(s.p99.toFixed(3)),
             },
-            statusCodes: statusCodesObj,
-            errors: errorsObj,
+            statusCodes: statusCodesObj, errors: errorsObj,
         };
         console.log(JSON.stringify(output, null, 2));
     }
 }
 // ==================== 主函数 ====================
 async function main() {
-    const args = process.argv.slice(2);
-    const config = parseArgs(args);
-    const benchmarker = new HttpBenchmarker(config);
-    await benchmarker.run();
+    const config = parseArgs(process.argv.slice(2));
+    await new HttpBenchmarker(config).run();
 }
 main().catch((err) => {
-    console.error(`发生错误: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof BenchError
+        ? `[${err.code}] ${err.message}`
+        : err instanceof Error ? err.message : String(err);
+    console.error(`发生错误: ${msg}`);
     process.exit(1);
 });
 //# sourceMappingURL=index.js.map

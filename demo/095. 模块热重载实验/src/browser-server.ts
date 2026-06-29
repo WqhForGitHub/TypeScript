@@ -45,10 +45,10 @@ const sseClients: http.ServerResponse[] = [];
 
 /** 向所有客户端广播 SSE 事件 */
 function broadcast(event: string, data: any): void {
-    const payload = JSON.stringify(data);
-    for (const client of sseClients) {
-        client.write(`event: ${event}\ndata: ${payload}\n\n`);
-    }
+  const payload = JSON.stringify(data);
+  for (const client of sseClients) {
+    client.write(`event: ${event}\ndata: ${payload}\n\n`);
+  }
 }
 
 // ─── TypeScript 编译 ────────────────────────────────────
@@ -60,20 +60,20 @@ function broadcast(event: string, data: any): void {
  * 客户端执行时会将模块注册到 HMR 模块注册表中。
  */
 function compileModule(name: string, source: string): string {
-    const result = ts.transpileModule(source, {
-        compilerOptions: {
-            module: ts.ModuleKind.CommonJS,
-            target: ts.ScriptTarget.ES2020,
-            esModuleInterop: true,
-        },
-    });
+  const result = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      esModuleInterop: true,
+    },
+  });
 
-    // 包装为 HMR 注册调用
-    return [
-        `__hmr_register__('${name}', function(exports, require, module) {`,
-        result.outputText,
-        "});",
-    ].join("\n");
+  // 包装为 HMR 注册调用
+  return [
+    `__hmr_register__('${name}', function(exports, require, module) {`,
+    result.outputText,
+    "});",
+  ].join("\n");
 }
 
 // ─── HTML 页面生成 ───────────────────────────────────────
@@ -89,39 +89,39 @@ function compileModule(name: string, source: string): string {
  * 5. 应用逻辑
  */
 function generateHTML(): string {
-    // 读取并编译初始模块
-    let counterCode = "";
-    let formatterCode = "";
+  // 读取并编译初始模块
+  let counterCode = "";
+  let formatterCode = "";
 
-    try {
-        const counterSrc = fs.readFileSync(
-            path.join(MODULES_DIR, "counter.ts"),
-            "utf-8",
-        );
-        counterCode = compileModule("counter", counterSrc);
-    } catch {
-        counterCode = `__hmr_register__('counter', function(exports) {
+  try {
+    const counterSrc = fs.readFileSync(
+      path.join(MODULES_DIR, "counter.ts"),
+      "utf-8",
+    );
+    counterCode = compileModule("counter", counterSrc);
+  } catch {
+    counterCode = `__hmr_register__('counter', function(exports) {
       var count = 0;
       exports.increment = function() { return ++count; };
       exports.decrement = function() { return --count; };
       exports.getCount = function() { return count; };
       exports.reset = function() { count = 0; return 0; };
     });`;
-    }
+  }
 
-    try {
-        const formatterSrc = fs.readFileSync(
-            path.join(MODULES_DIR, "formatter.ts"),
-            "utf-8",
-        );
-        formatterCode = compileModule("formatter", formatterSrc);
-    } catch {
-        formatterCode = `__hmr_register__('formatter', function(exports) {
+  try {
+    const formatterSrc = fs.readFileSync(
+      path.join(MODULES_DIR, "formatter.ts"),
+      "utf-8",
+    );
+    formatterCode = compileModule("formatter", formatterSrc);
+  } catch {
+    formatterCode = `__hmr_register__('formatter', function(exports) {
       exports.format = function(count) { return '[计数器] 当前值: ' + count; };
     });`;
-    }
+  }
 
-    return `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -339,34 +339,34 @@ function generateHTML(): string {
 // ─── HTTP 服务器 ─────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
-    const urlPath = req.url || "/";
+  const urlPath = req.url || "/";
 
-    if (urlPath === "/") {
-        // 首页：返回 HTML
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(generateHTML());
-    } else if (urlPath === "/hmr") {
-        // SSE 端点：建立长连接，推送模块更新
-        res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-        });
+  if (urlPath === "/") {
+    // 首页：返回 HTML
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(generateHTML());
+  } else if (urlPath === "/hmr") {
+    // SSE 端点：建立长连接，推送模块更新
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
 
-        // 发送连接确认
-        res.write("event: connected\ndata: {}\n\n");
-        sseClients.push(res);
+    // 发送连接确认
+    res.write("event: connected\ndata: {}\n\n");
+    sseClients.push(res);
 
-        // 客户端断开时清理
-        req.on("close", () => {
-            const idx = sseClients.indexOf(res);
-            if (idx >= 0) sseClients.splice(idx, 1);
-        });
-    } else {
-        res.writeHead(404);
-        res.end("Not Found");
-    }
+    // 客户端断开时清理
+    req.on("close", () => {
+      const idx = sseClients.indexOf(res);
+      if (idx >= 0) sseClients.splice(idx, 1);
+    });
+  } else {
+    res.writeHead(404);
+    res.end("Not Found");
+  }
 });
 
 // ─── 文件监听 ────────────────────────────────────────────
@@ -376,70 +376,70 @@ const server = http.createServer((req, res) => {
  * 检测到变化后，重新编译模块并通过 SSE 推送给浏览器。
  */
 function watchModules(): void {
-    console.log("[HMR] 正在监听: src/modules/");
+  console.log("[HMR] 正在监听: src/modules/");
 
-    let debounceTimer: NodeJS.Timeout | null = null;
+  let debounceTimer: NodeJS.Timeout | null = null;
 
-    fs.watch(MODULES_DIR, { recursive: true }, (event, filename) => {
-        if (!filename || !filename.endsWith(".ts")) return;
+  fs.watch(MODULES_DIR, { recursive: true }, (event, filename) => {
+    if (!filename || !filename.endsWith(".ts")) return;
 
-        // 防抖：避免编辑器保存触发多次事件
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            debounceTimer = null;
-            handleModuleChange(filename);
-        }, 100);
-    });
+    // 防抖：避免编辑器保存触发多次事件
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      handleModuleChange(filename);
+    }, 100);
+  });
 }
 
 /** 处理模块文件变化 */
 function handleModuleChange(filename: string): void {
-    const filePath = path.join(MODULES_DIR, filename);
-    const moduleName = path.basename(filename, ".ts");
+  const filePath = path.join(MODULES_DIR, filename);
+  const moduleName = path.basename(filename, ".ts");
 
-    try {
-        const source = fs.readFileSync(filePath, "utf-8");
-        const compiled = compileModule(moduleName, source);
+  try {
+    const source = fs.readFileSync(filePath, "utf-8");
+    const compiled = compileModule(moduleName, source);
 
-        // 通过 SSE 推送更新到所有浏览器客户端
-        broadcast("update", { name: moduleName, code: compiled });
+    // 通过 SSE 推送更新到所有浏览器客户端
+    broadcast("update", { name: moduleName, code: compiled });
 
-        console.log(
-            `[HMR] 模块已推送: ${filename} → ${sseClients.length} 个客户端`,
-        );
-    } catch (err) {
-        console.error(`[HMR] 编译失败 ${filename}:`, err);
-    }
+    console.log(
+      `[HMR] 模块已推送: ${filename} → ${sseClients.length} 个客户端`,
+    );
+  } catch (err) {
+    console.error(`[HMR] 编译失败 ${filename}:`, err);
+  }
 }
 
 // ─── 启动 ────────────────────────────────────────────────
 
 export function startBrowserServer(): void {
-    server.listen(PORT, () => {
-        console.log("");
-        console.log("╔══════════════════════════════════════════════════╗");
-        console.log("║         模块热重载实验 - 浏览器模式              ║");
-        console.log("╚══════════════════════════════════════════════════╝");
-        console.log("");
-        console.log("  浏览器地址: http://localhost:" + PORT);
-        console.log("");
-        console.log("  编辑 src/modules/ 下的文件并保存，");
-        console.log("  浏览器页面会自动更新，无需刷新。");
-        console.log("");
-        console.log("  架构:");
-        console.log("    Server: fs.watch → ts.transpileModule → SSE push");
-        console.log("    Client: SSE → eval() → __hmr_register__ → UI 更新");
-        console.log("");
-        console.log("按 Ctrl+C 退出");
-        console.log("─".repeat(52));
+  server.listen(PORT, () => {
+    console.log("");
+    console.log("╔══════════════════════════════════════════════════╗");
+    console.log("║         模块热重载实验 - 浏览器模式              ║");
+    console.log("╚══════════════════════════════════════════════════╝");
+    console.log("");
+    console.log("  浏览器地址: http://localhost:" + PORT);
+    console.log("");
+    console.log("  编辑 src/modules/ 下的文件并保存，");
+    console.log("  浏览器页面会自动更新，无需刷新。");
+    console.log("");
+    console.log("  架构:");
+    console.log("    Server: fs.watch → ts.transpileModule → SSE push");
+    console.log("    Client: SSE → eval() → __hmr_register__ → UI 更新");
+    console.log("");
+    console.log("按 Ctrl+C 退出");
+    console.log("─".repeat(52));
 
-        watchModules();
-    });
+    watchModules();
+  });
 
-    process.on("SIGINT", () => {
-        sseClients.forEach((c) => c.end());
-        server.close();
-        console.log("\n再见！");
-        process.exit(0);
-    });
+  process.on("SIGINT", () => {
+    sseClients.forEach((c) => c.end());
+    server.close();
+    console.log("\n再见！");
+    process.exit(0);
+  });
 }

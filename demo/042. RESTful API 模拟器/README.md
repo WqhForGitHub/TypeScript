@@ -49,36 +49,36 @@ npm start
 
 ### 基础
 
-| 方法   | 路径       | 说明       |
-| ------ | ---------- | ---------- |
-| GET    | /          | API 概览   |
-| GET    | /health    | 健康检查   |
+| 方法 | 路径    | 说明     |
+| ---- | ------- | -------- |
+| GET  | /       | API 概览 |
+| GET  | /health | 健康检查 |
 
 ### 用户 (/api/users)
 
-| 方法   | 路径              | 说明         |
-| ------ | ----------------- | ------------ |
-| GET    | /api/users        | 用户列表（支持分页） |
-| GET    | /api/users/:id    | 用户详情     |
-| POST   | /api/users        | 创建用户     |
-| PUT    | /api/users/:id    | 更新用户     |
-| DELETE | /api/users/:id    | 删除用户     |
+| 方法   | 路径           | 说明                 |
+| ------ | -------------- | -------------------- |
+| GET    | /api/users     | 用户列表（支持分页） |
+| GET    | /api/users/:id | 用户详情             |
+| POST   | /api/users     | 创建用户             |
+| PUT    | /api/users/:id | 更新用户             |
+| DELETE | /api/users/:id | 删除用户             |
 
 ### 文章 (/api/posts)
 
-| 方法   | 路径              | 说明         |
-| ------ | ----------------- | ------------ |
-| GET    | /api/posts        | 文章列表     |
-| GET    | /api/posts/:id    | 文章详情     |
-| POST   | /api/posts        | 创建文章     |
-| PUT    | /api/posts/:id    | 更新文章     |
-| DELETE | /api/posts/:id    | 删除文章     |
+| 方法   | 路径           | 说明     |
+| ------ | -------------- | -------- |
+| GET    | /api/posts     | 文章列表 |
+| GET    | /api/posts/:id | 文章详情 |
+| POST   | /api/posts     | 创建文章 |
+| PUT    | /api/posts/:id | 更新文章 |
+| DELETE | /api/posts/:id | 删除文章 |
 
 ### 管理（需认证）
 
-| 方法   | 路径                    | 说明         |
-| ------ | ----------------------- | ------------ |
-| GET    | /api/admin/dashboard    | 管理后台     |
+| 方法 | 路径                 | 说明     |
+| ---- | -------------------- | -------- |
+| GET  | /api/admin/dashboard | 管理后台 |
 
 ## 使用示例
 

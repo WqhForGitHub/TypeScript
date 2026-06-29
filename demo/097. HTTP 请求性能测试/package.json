@@ -11,7 +11,13 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "http", "benchmark", "performance", "testing"],
+  "keywords": [
+    "typescript",
+    "http",
+    "benchmark",
+    "performance",
+    "testing"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

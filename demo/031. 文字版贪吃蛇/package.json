@@ -11,7 +11,13 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "game", "snake", "cli", "readline"],
+  "keywords": [
+    "typescript",
+    "game",
+    "snake",
+    "cli",
+    "readline"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

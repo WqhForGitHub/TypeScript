@@ -3,13 +3,21 @@
   "version": "1.0.0",
   "description": "TypeScript ORM 简单实现，支持 schema 定义、CRUD、关联关系（hasOne/hasMany/belongsTo）",
   "main": "dist/index.js",
-  "bin": { "orm-cli": "dist/index.js" },
+  "bin": {
+    "orm-cli": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "orm", "database", "model", "relations"],
+  "keywords": [
+    "typescript",
+    "orm",
+    "database",
+    "model",
+    "relations"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

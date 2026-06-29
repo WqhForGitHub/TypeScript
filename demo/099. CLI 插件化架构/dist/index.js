@@ -1,8 +1,41 @@
 #!/usr/bin/env node
 "use strict";
+/*
+ * CLI 插件化架构 - 入口文件
+ *
+ * 演示:
+ *   - 函数重载 (parseArgs)
+ *   - 判别联合 + 类型守卫 (ClassifiedCommand)
+ *   - 生成器 / 迭代器 (pluginRegistrations)
+ *   - as const 断言 (仅用于字面量)
+ *   - 元组与只读元组 (ParsedCommandTuple)
+ *   - 字符串枚举 (CommandKind)
+ */
 Object.defineProperty(exports, "__esModule", { value: true });
 const plugin_manager_1 = require("./core/plugin-manager");
+const types_1 = require("./core/types");
+const logger_1 = require("./plugins/logger");
+const greet_1 = require("./plugins/greet");
+const time_1 = require("./plugins/time");
+const calc_1 = require("./plugins/calc");
 /* ============================== 内置命令 ============================== */
+/** 内置命令名 (as const, 仅字面量) —— 用于 main 中的判别联合分类 */
+const BUILTIN_NAMES = ['help', 'h', 'version'];
+/** 类型守卫: 判断字符串是否为内置命令名 */
+function isBuiltinName(name) {
+    return BUILTIN_NAMES.includes(name);
+}
+/** 类型守卫: 判断分类是否为内置命令 */
+function isBuiltinClassified(c) {
+    return c.kind === types_1.CommandKind.Builtin;
+}
+/** 将命令名分类为内置或插件 (返回判别联合) */
+function classifyCommand(command, args) {
+    if (isBuiltinName(command)) {
+        return { kind: types_1.CommandKind.Builtin, name: command, args };
+    }
+    return { kind: types_1.CommandKind.Plugin, name: command, args };
+}
 /** 内置 help 命令 */
 function builtinHelp(manager) {
     const registry = manager.getCommandRegistry();
@@ -21,15 +54,8 @@ function builtinHelp(manager) {
 function builtinVersion() {
     console.log('\x1b[36mCLI 插件化架构 Demo v1.0.0\x1b[0m');
 }
-/* ============================== 参数解析 ============================== */
-/**
- * 简易命令行参数解析器
- * - 第一个非选项参数为命令名
- * - --flag 形式的布尔选项
- * - --key value 形式的字符串选项
- * - 其余为位置参数
- */
-function parseArgs(argv) {
+function parseArgs(argv, asTuple) {
+    // 可变的内部构建结构 (CommandArgs 的字段是 readonly, 内部用可变副本构建)
     const positional = [];
     const options = {};
     let i = 0;
@@ -58,11 +84,24 @@ function parseArgs(argv) {
         }
     }
     const command = positional.shift() ?? '';
-    return { command, args: { positional, options } };
+    const args = { positional, options };
+    if (asTuple === true) {
+        return [command, args];
+    }
+    return { command, args };
+}
+/* ============================== 生成器: 插件注册顺序 ============================== */
+/** 生成器: 按顺序产出插件注册函数 (保证注册顺序: logger 最先) */
+function* pluginRegistrations() {
+    yield logger_1.register;
+    yield greet_1.register;
+    yield time_1.register;
+    yield calc_1.register;
 }
 /* ============================== REPL 模式 ============================== */
 /** 交互式 REPL */
 function startRepl(manager) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const readline = require('readline');
     const rl = readline.createInterface({
         input: process.stdin,
@@ -85,6 +124,7 @@ function startRepl(manager) {
         }
         const tokens = trimmed.split(/\s+/);
         const { command, args } = parseArgs(tokens);
+        // REPL 内置命令 (保持与原版一致: help / version / v)
         if (command === 'help') {
             builtinHelp(manager);
         }
@@ -106,15 +146,10 @@ function startRepl(manager) {
 /* ============================== 入口 ============================== */
 async function main() {
     const manager = new plugin_manager_1.PluginManager();
-    // 注册内置插件（注意顺序：logger 最先，因为 calc 依赖 logger）
-    const { register: registerLogger } = require('./plugins/logger');
-    const { register: registerGreet } = require('./plugins/greet');
-    const { register: registerTime } = require('./plugins/time');
-    const { register: registerCalc } = require('./plugins/calc');
-    manager.register(registerLogger());
-    manager.register(registerGreet());
-    manager.register(registerTime());
-    manager.register(registerCalc());
+    // 通过生成器按顺序注册内置插件 (logger 最先, calc 依赖 logger)
+    for (const register of pluginRegistrations()) {
+        manager.register(register());
+    }
     // 初始化所有插件
     await manager.init();
     // 解析命令行参数
@@ -125,19 +160,33 @@ async function main() {
         return;
     }
     const { command, args } = parseArgs(argv);
-    // 内置命令
-    if (command === 'help' || command === 'h' || args.options.help === true) {
+    // --help 标志: 优先级最高, 任意命令均可触发
+    if (args.options.help === true) {
         builtinHelp(manager);
         await manager.destroy();
         return;
     }
-    if (command === 'version' || args.options.v === true || args.options.version === true) {
+    // --version / -v 标志
+    if (args.options.v === true || args.options.version === true) {
         builtinVersion();
         await manager.destroy();
         return;
     }
-    // 插件命令
-    await manager.executeCommand(command, args);
+    // 使用判别联合分类命令 (演示类型守卫窄化)
+    const classified = classifyCommand(command, args);
+    if (isBuiltinClassified(classified)) {
+        // 内置命令: help / h / version
+        if (classified.name === 'help' || classified.name === 'h') {
+            builtinHelp(manager);
+        }
+        else {
+            builtinVersion();
+        }
+    }
+    else {
+        // 插件命令
+        await manager.executeCommand(classified.name, classified.args);
+    }
     // 销毁
     await manager.destroy();
 }

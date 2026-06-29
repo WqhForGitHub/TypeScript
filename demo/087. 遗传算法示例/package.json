@@ -11,7 +11,12 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "genetic-algorithm", "ai", "optimization"],
+  "keywords": [
+    "typescript",
+    "genetic-algorithm",
+    "ai",
+    "optimization"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

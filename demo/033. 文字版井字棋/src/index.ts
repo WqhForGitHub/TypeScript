@@ -1,31 +1,26 @@
 #!/usr/bin/env node
 /**
- * 文字版井字棋 (Text-based Tic-Tac-Toe)
- * ------------------------------------
- * 棋盘 3x3, 位置编号 1-9:
- *   1 | 2 | 3
- *   4 | 5 | 6
- *   7 | 8 | 9
+ * 文字版井字棋 (Text-based Tic-Tac-Toe) — Enhanced Edition
  *
- * 模式：
- *   pvp   玩家 vs 玩家
- *   pvc   玩家 vs AI (玩家执 X, AI 执 O, AI 使用 minimax 最优策略)
- *   cvc   AI vs AI 自动演示
+ * Features:
+ *   - Multiple game modes: PvP, PvAI (3 difficulty levels), AIvAI
+ *   - Board sizes: 3x3, 4x4, 5x5 with configurable win length
+ *   - AI with minimax + alpha-beta pruning, difficulty-based randomness
+ *   - Move history with undo/redo
+ *   - Game state machine, statistics, event system
+ *   - ANSI color rendering, player profiles
  *
- * 命令：
- *   <1-9>        在对应位置落子 (玩家回合)
- *   <回车>       cvc 模式继续下一步
- *   r            重新开始
- *   m            返回菜单选择模式
- *   q            退出
- *
- * 规则：
- *   - X 先手
- *   - 三子连珠 (横/竖/斜) 获胜
- *   - 棋盘填满未分胜负为平局
+ * TypeScript features: enums, generics, discriminated unions, mapped types,
+ * conditional types, template literal types, type guards, utility types,
+ * tuples, abstract classes, function overloads, as const, custom errors,
+ * generators, symbols, satisfies, getters/setters.
  */
 
 import * as readline from "readline";
+
+// ============================================================
+// 1. 常量与枚举
+// ============================================================
 
 const ANSI = {
   RESET: "\x1b[0m",
@@ -35,242 +30,898 @@ const ANSI = {
   RED: "\x1b[31m",
   GREEN: "\x1b[32m",
   YELLOW: "\x1b[33m",
+  BLUE: "\x1b[34m",
   CYAN: "\x1b[36m",
   GRAY: "\x1b[90m",
+} as const;
+
+enum Mark {
+  X = "X",
+  O = "O",
+  Empty = " ",
+}
+
+enum GameMode {
+  PvP = "pvp",
+  PvAI = "pvc",
+  AIvAI = "cvc",
+}
+
+enum AIDifficulty {
+  Easy = "easy",
+  Medium = "medium",
+  Hard = "hard",
+}
+
+enum GamePhase {
+  Menu = "menu",
+  Playing = "playing",
+  Won = "won",
+  Draw = "draw",
+}
+
+enum Color {
+  Red = "red",
+  Green = "green",
+  Yellow = "yellow",
+  Cyan = "cyan",
+  Gray = "gray",
+  Bold = "bold",
+}
+
+type ColorCode = (typeof ANSI)[keyof typeof ANSI];
+
+const COLOR_MAP: Record<Color, ColorCode> = {
+  [Color.Red]: ANSI.RED,
+  [Color.Green]: ANSI.GREEN,
+  [Color.Yellow]: ANSI.YELLOW,
+  [Color.Cyan]: ANSI.CYAN,
+  [Color.Gray]: ANSI.GRAY,
+  [Color.Bold]: ANSI.BOLD,
 };
 
-type Player = "X" | "O";
-type Cell = Player | " ";
-type Board = Cell[]; // 长度 9, 索引 0-8 对应位置 1-9
+const DATA_FILE = `${process.env.USERPROFILE || process.env.HOME || "."}/.tictactoe_data.json`;
 
-type GameMode = "pvp" | "pvc" | "cvc";
+interface BoardSizeConfig {
+  readonly size: number;
+  readonly winLength: number;
+  readonly label: string;
+}
+
+const BOARD_PRESETS: Record<number, BoardSizeConfig> = {
+  3: { size: 3, winLength: 3, label: "3x3" },
+  4: { size: 4, winLength: 4, label: "4x4" },
+  5: { size: 5, winLength: 4, label: "5x5" },
+} as const satisfies Record<number, BoardSizeConfig>;
+
+// ============================================================
+// 2. 接口与类型
+// ============================================================
+
+type Cell = Mark;
+type Board = readonly Cell[];
+
+type Coord = readonly [number, number];
+
+interface PlayerProfile {
+  readonly name: string;
+  readonly mark: Mark;
+  readonly isAI: boolean;
+  readonly difficulty?: AIDifficulty;
+}
 
 interface GameResult {
-  winner: Player | "draw" | null;
-  line: number[] | null; // 获胜的三连索引
+  readonly winner: Mark | "draw" | null;
+  readonly winLine: readonly number[] | null;
 }
 
-const WIN_LINES: number[][] = [
-  [0, 1, 2],
-  [3, 4, 5],
-  [6, 7, 8], // 横
-  [0, 3, 6],
-  [1, 4, 7],
-  [2, 5, 8], // 竖
-  [0, 4, 8],
-  [2, 4, 6], // 斜
-];
-
-function emptyBoard(): Board {
-  return Array(9).fill(" ");
+interface GameStats {
+  readonly gamesPlayed: number;
+  readonly xWins: number;
+  readonly oWins: number;
+  readonly draws: number;
+  readonly [key: string]: unknown;
 }
 
-function checkResult(board: Board): GameResult {
-  for (const line of WIN_LINES) {
-    const [a, b, c] = line;
-    if (board[a] !== " " && board[a] === board[b] && board[a] === board[c]) {
-      return { winner: board[a] as Player, line };
-    }
-  }
-  if (board.every((c) => c !== " ")) {
-    return { winner: "draw", line: null };
-  }
-  return { winner: null, line: null };
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+interface EventMap {
+  move: { readonly pos: number; readonly mark: Mark };
+  undo: { readonly pos: number };
+  redo: { readonly pos: number };
+  gameEnd: { readonly result: GameResult };
+  phaseChange: { readonly from: GamePhase; readonly to: GamePhase };
 }
 
-function availableMoves(board: Board): number[] {
-  const moves: number[] = [];
-  for (let i = 0; i < 9; i++) {
-    if (board[i] === " ") moves.push(i);
-  }
-  return moves;
-}
+type EventType = keyof EventMap;
+type EventHandler<E extends EventType> = (payload: EventMap[E]) => void;
 
-// ============== Minimax AI ==============
-// 返回 { score, index }
-// score: 10 表示 AI (maximizing) 胜, -10 表示对手 (minimizing) 胜, 0 平局或未终局
-interface MinimaxResult {
-  score: number;
-  index: number;
-}
+type EventName = `on${Capitalize<string>}`;
 
-function minimax(
-  board: Board,
-  isMaximizing: boolean,
-  aiPlayer: Player,
-  depth: number
-): MinimaxResult {
-  const human: Player = aiPlayer === "X" ? "O" : "X";
-  const result = checkResult(board);
+// ============================================================
+// 3. 判别联合
+// ============================================================
 
-  if (result.winner === aiPlayer) {
-    return { score: 10 - depth, index: -1 };
-  }
-  if (result.winner === human) {
-    return { score: -10 + depth, index: -1 };
-  }
-  if (result.winner === "draw") {
-    return { score: 0, index: -1 };
-  }
+type GameEvent =
+  | { readonly type: "move"; readonly pos: number; readonly mark: Mark }
+  | { readonly type: "undo" }
+  | { readonly type: "redo" }
+  | { readonly type: "restart" }
+  | { readonly type: "menu" }
+  | { readonly type: "quit" };
 
-  const moves = availableMoves(board);
-  if (moves.length === 0) {
-    return { score: 0, index: -1 };
-  }
+type EventOfType<T extends GameEvent["type"]> = Extract<GameEvent, { type: T }>;
 
-  const candidates: MinimaxResult[] = [];
-  for (const m of moves) {
-    board[m] = isMaximizing ? aiPlayer : human;
-    const res = minimax(board, !isMaximizing, aiPlayer, depth + 1);
-    candidates.push({ score: res.score, index: m });
-    board[m] = " ";
-  }
+type ParsedCommand =
+  | { readonly action: "move"; readonly pos: number }
+  | { readonly action: "undo" }
+  | { readonly action: "redo" }
+  | { readonly action: "restart" }
+  | { readonly action: "menu" }
+  | { readonly action: "stats" }
+  | { readonly action: "help" }
+  | { readonly action: "quit" }
+  | { readonly action: "next" }
+  | { readonly action: "unknown"; readonly input: string };
 
-  if (isMaximizing) {
-    let best = candidates[0];
-    for (const c of candidates) {
-      if (c.score > best.score) best = c;
-    }
-    return best;
-  } else {
-    let best = candidates[0];
-    for (const c of candidates) {
-      if (c.score < best.score) best = c;
-    }
-    return best;
+// ============================================================
+// 4. 自定义错误
+// ============================================================
+
+abstract class TicTacError extends Error {
+  abstract readonly code: string;
+  constructor(message: string) {
+    super(message);
+    this.name = this.constructor.name;
   }
 }
 
-function bestMove(board: Board, aiPlayer: Player): number {
-  const res = minimax(board, true, aiPlayer, 0);
-  return res.index;
+class InvalidPositionError extends TicTacError {
+  readonly code = "INVALID_POS";
+  constructor(pos: number) {
+    super(`位置无效: ${pos}`);
+  }
 }
 
-// ============== 渲染 ==============
-function render(
-  board: Board,
-  mode: GameMode,
-  currentPlayer: Player,
-  result: GameResult,
-  statusMsg: string
-): void {
-  const lines: string[] = [];
-  lines.push(ANSI.BOLD + ANSI.CYAN + "===== 文字版井字棋 =====" + ANSI.RESET);
-  lines.push(
-    `模式: ${mode}   当前回合: ${formatPlayer(currentPlayer)}` +
-      (result.winner ? `   结果: ${formatResult(result)}` : "")
+class CellOccupiedError extends TicTacError {
+  readonly code = "CELL_OCCUPIED";
+  constructor(pos: number) {
+    super(`位置 ${pos} 已被占用`);
+  }
+}
+
+class GameStateError extends TicTacError {
+  readonly code = "GAME_STATE";
+  constructor(msg: string) {
+    super(msg);
+  }
+}
+
+// ============================================================
+// 5. 类型守卫
+// ============================================================
+
+function isMark(value: unknown): value is Mark {
+  return (
+    typeof value === "string" && Object.values(Mark).includes(value as Mark)
   );
-  lines.push("");
+}
 
-  const winningSet = new Set(result.line ?? []);
-  // 棋盘 - 位置编号 1-9 对应 0-8
-  const cells: string[] = [];
-  for (let i = 0; i < 9; i++) {
-    const v = board[i];
-    if (v === " ") {
-      cells.push(ANSI.GRAY + (i + 1).toString() + ANSI.RESET);
-    } else if (winningSet.has(i)) {
-      cells.push(ANSI.BOLD + ANSI.YELLOW + v + ANSI.RESET);
-    } else if (v === "X") {
-      cells.push(ANSI.RED + v + ANSI.RESET);
-    } else {
-      cells.push(ANSI.GREEN + v + ANSI.RESET);
+function isGameMode(value: unknown): value is GameMode {
+  return (
+    typeof value === "string" &&
+    Object.values(GameMode).includes(value as GameMode)
+  );
+}
+
+function isAIDifficulty(value: unknown): value is AIDifficulty {
+  return (
+    typeof value === "string" &&
+    Object.values(AIDifficulty).includes(value as AIDifficulty)
+  );
+}
+
+// ============================================================
+// 6. 泛型事件系统
+// ============================================================
+
+class EventEmitter<E extends object> {
+  private readonly handlers: Map<string, Set<(p: any) => void>> = new Map();
+
+  on<K extends keyof E>(event: K, handler: (payload: E[K]) => void): void {
+    const key = String(event);
+    if (!this.handlers.has(key)) {
+      this.handlers.set(key, new Set());
+    }
+    this.handlers.get(key)!.add(handler as (p: any) => void);
+  }
+
+  emit<K extends keyof E>(event: K, payload: E[K]): void {
+    this.handlers.get(String(event))?.forEach((h) => {
+      try {
+        (h as (p: E[K]) => void)(payload);
+      } catch {
+        /* swallow */
+      }
+    });
+  }
+}
+
+// ============================================================
+// 7. 泛型栈 (用于撤销/重做)
+// ============================================================
+
+class Stack<T> {
+  private readonly items: T[] = [];
+  private readonly maxSize: number;
+
+  constructor(maxSize: number = 100) {
+    this.maxSize = maxSize;
+  }
+
+  push(item: T): void {
+    this.items.push(item);
+    if (this.items.length > this.maxSize) {
+      this.items.shift();
     }
   }
 
-  lines.push("     │     │     ");
-  lines.push(`  ${cells[0]}  │  ${cells[1]}  │  ${cells[2]}  `);
-  lines.push("─────┼─────┼─────");
-  lines.push(`  ${cells[3]}  │  ${cells[4]}  │  ${cells[5]}  `);
-  lines.push("─────┼─────┼─────");
-  lines.push(`  ${cells[6]}  │  ${cells[7]}  │  ${cells[8]}  `);
-  lines.push("     │     │     ");
-
-  lines.push("");
-  lines.push(ANSI.CYAN + "操作: 输入 1-9 落子  r 重新开始  m 返回菜单  q 退出" + ANSI.RESET);
-  if (mode === "cvc") {
-    lines.push(ANSI.CYAN + "[cvc] 按回车执行下一步" + ANSI.RESET);
-  }
-  if (statusMsg) {
-    lines.push(ANSI.YELLOW + statusMsg + ANSI.RESET);
+  pop(): T | undefined {
+    return this.items.pop();
   }
 
-  process.stdout.write(ANSI.CLEAR + ANSI.HOME);
-  process.stdout.write(lines.join("\n") + "\n");
+  peek(): T | undefined {
+    return this.items[this.items.length - 1];
+  }
+
+  get size(): number {
+    return this.items.length;
+  }
+
+  get isEmpty(): boolean {
+    return this.items.length === 0;
+  }
+
+  clear(): void {
+    this.items.length = 0;
+  }
+
+  *[Symbol.iterator](): Iterator<T> {
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      yield this.items[i];
+    }
+  }
 }
 
-const ANSI_GRAY = "\x1b[90m";
-void ANSI_GRAY;
+// ============================================================
+// 8. 生成器
+// ============================================================
 
-function formatPlayer(p: Player): string {
-  return p === "X"
-    ? ANSI.RED + "X" + ANSI.RESET
-    : ANSI.GREEN + "O" + ANSI.RESET;
+function* winLines(
+  size: number,
+  winLength: number,
+): Generator<readonly number[]> {
+  // Horizontal
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c <= size - winLength; c++) {
+      yield Array.from({ length: winLength }, (_, i) => r * size + c + i);
+    }
+  }
+  // Vertical
+  for (let c = 0; c < size; c++) {
+    for (let r = 0; r <= size - winLength; r++) {
+      yield Array.from({ length: winLength }, (_, i) => (r + i) * size + c);
+    }
+  }
+  // Diagonal (down-right)
+  for (let r = 0; r <= size - winLength; r++) {
+    for (let c = 0; c <= size - winLength; c++) {
+      yield Array.from({ length: winLength }, (_, i) => (r + i) * size + c + i);
+    }
+  }
+  // Diagonal (down-left)
+  for (let r = 0; r <= size - winLength; r++) {
+    for (let c = winLength - 1; c < size; c++) {
+      yield Array.from({ length: winLength }, (_, i) => (r + i) * size + c - i);
+    }
+  }
 }
 
-function formatResult(result: GameResult): string {
-  if (result.winner === "draw") return ANSI.YELLOW + "平局" + ANSI.RESET;
-  if (result.winner === null) return "";
-  return formatPlayer(result.winner) + " 胜";
+function* availablePositions(board: Board): Generator<number> {
+  for (let i = 0; i < board.length; i++) {
+    if (board[i] === Mark.Empty) yield i;
+  }
 }
 
-// ============== 游戏循环 ==============
-interface GameContext {
-  board: Board;
-  mode: GameMode;
-  currentPlayer: Player;
-  result: GameResult;
-  statusMsg: string;
+// ============================================================
+// 9. 抽象 AI 策略
+// ============================================================
+
+abstract class AIStrategy {
+  abstract readonly name: string;
+  abstract chooseMove(
+    board: Board,
+    player: Mark,
+    size: number,
+    winLength: number,
+  ): number;
 }
 
-function newGame(mode: GameMode): GameContext {
-  return {
-    board: emptyBoard(),
-    mode,
-    currentPlayer: "X",
-    result: { winner: null, line: null },
-    statusMsg: "",
+class RandomAI extends AIStrategy {
+  readonly name = "随机";
+  chooseMove(
+    board: Board,
+    _player: Mark,
+    _size: number,
+    _winLength: number,
+  ): number {
+    const moves = [...availablePositions(board)];
+    if (moves.length === 0) return -1;
+    return moves[Math.floor(Math.random() * moves.length)] ?? -1;
+  }
+}
+
+class HeuristicAI extends AIStrategy {
+  readonly name = "启发式";
+  chooseMove(
+    board: Board,
+    player: Mark,
+    size: number,
+    winLength: number,
+  ): number {
+    const opponent = player === Mark.X ? Mark.O : Mark.X;
+
+    // Try to win
+    for (const pos of availablePositions(board)) {
+      const test = [...board] as Mutable<Board>;
+      test[pos] = player;
+      if (checkWin(test as Board, player, size, winLength)) return pos;
+    }
+
+    // Block opponent
+    for (const pos of availablePositions(board)) {
+      const test = [...board] as Mutable<Board>;
+      test[pos] = opponent;
+      if (checkWin(test as Board, opponent, size, winLength)) return pos;
+    }
+
+    // Take center
+    const center = Math.floor((size * size) / 2);
+    if (board[center] === Mark.Empty) return center;
+
+    // Take corners
+    const corners = [0, size - 1, size * (size - 1), size * size - 1];
+    const availCorners = corners.filter((c) => board[c] === Mark.Empty);
+    if (availCorners.length > 0) {
+      return availCorners[Math.floor(Math.random() * availCorners.length)] ?? 0;
+    }
+
+    // Random
+    const moves = [...availablePositions(board)];
+    return moves[Math.floor(Math.random() * moves.length)] ?? -1;
+  }
+}
+
+class MinimaxAI extends AIStrategy {
+  readonly name = "极小极大";
+
+  chooseMove(
+    board: Board,
+    player: Mark,
+    size: number,
+    winLength: number,
+  ): number {
+    const result = this.minimax(
+      board,
+      true,
+      player,
+      player,
+      size,
+      winLength,
+      -Infinity,
+      Infinity,
+      0,
+    );
+    return result.move ?? -1;
+  }
+
+  private minimax(
+    board: Board,
+    isMax: boolean,
+    aiPlayer: Mark,
+    currentPlayer: Mark,
+    size: number,
+    winLength: number,
+    alpha: number,
+    beta: number,
+    depth: number,
+  ): { readonly score: number; readonly move?: number } {
+    const opponent = aiPlayer === Mark.X ? Mark.O : Mark.X;
+    const result = checkWin(board, aiPlayer, size, winLength);
+    const oppResult = checkWin(board, opponent, size, winLength);
+
+    if (result) return { score: 100 - depth };
+    if (oppResult) return { score: -100 + depth };
+
+    const moves = [...availablePositions(board)];
+    if (moves.length === 0) return { score: 0 };
+
+    // Limit depth for larger boards
+    if (depth > 8) return { score: 0 };
+
+    let bestMove: number | undefined;
+    let bestScore = isMax ? -Infinity : Infinity;
+    const nextPlayer = currentPlayer === Mark.X ? Mark.O : Mark.X;
+
+    for (const move of moves) {
+      const test = [...board] as Mutable<Board>;
+      test[move] = currentPlayer;
+      const child = this.minimax(
+        test as Board,
+        !isMax,
+        aiPlayer,
+        nextPlayer,
+        size,
+        winLength,
+        alpha,
+        beta,
+        depth + 1,
+      );
+
+      if (isMax) {
+        if (child.score > bestScore) {
+          bestScore = child.score;
+          bestMove = move;
+        }
+        alpha = Math.max(alpha, bestScore);
+      } else {
+        if (child.score < bestScore) {
+          bestScore = child.score;
+          bestMove = move;
+        }
+        beta = Math.min(beta, bestScore);
+      }
+
+      if (beta <= alpha) break;
+    }
+
+    return { score: bestScore, move: bestMove };
+  }
+}
+
+const AI_STRATEGIES: Record<AIDifficulty, AIStrategy> = {
+  [AIDifficulty.Easy]: new RandomAI(),
+  [AIDifficulty.Medium]: new HeuristicAI(),
+  [AIDifficulty.Hard]: new MinimaxAI(),
+} as const satisfies Record<AIDifficulty, AIStrategy>;
+
+// ============================================================
+// 10. 胜负检测
+// ============================================================
+
+function checkWin(
+  board: Board,
+  player: Mark,
+  size: number,
+  winLength: number,
+): readonly number[] | null {
+  for (const line of winLines(size, winLength)) {
+    if (line.every((idx) => board[idx] === player)) {
+      return line;
+    }
+  }
+  return null;
+}
+
+function checkResult(
+  board: Board,
+  size: number,
+  winLength: number,
+): GameResult {
+  for (const player of [Mark.X, Mark.O]) {
+    const line = checkWin(board, player, size, winLength);
+    if (line) return { winner: player, winLine: line };
+  }
+  if (board.every((c) => c !== Mark.Empty)) {
+    return { winner: "draw", winLine: null };
+  }
+  return { winner: null, winLine: null };
+}
+
+// ============================================================
+// 11. 游戏引擎
+// ============================================================
+
+class GameEvents extends EventEmitter<EventMap> {}
+
+class TicTacToeGame {
+  private board: Cell[];
+  private phase: GamePhase = GamePhase.Menu;
+  private currentPlayer: Mark = Mark.X;
+  private result: GameResult = { winner: null, winLine: null };
+  private readonly undoStack: Stack<number>;
+  private readonly redoStack: Stack<number>;
+  private readonly events = new GameEvents();
+  private readonly stats: GameStats;
+  private statusMsg: string = "";
+
+  constructor(
+    readonly mode: GameMode,
+    readonly size: number,
+    readonly winLength: number,
+    readonly playerX: PlayerProfile,
+    readonly playerO: PlayerProfile,
+  ) {
+    this.board = new Array<Cell>(size * size).fill(Mark.Empty);
+    this.undoStack = new Stack<number>();
+    this.redoStack = new Stack<number>();
+    this.stats = loadStats();
+  }
+
+  get currentPhase(): GamePhase {
+    return this.phase;
+  }
+  get currentMark(): Mark {
+    return this.currentPlayer;
+  }
+  get currentResult(): GameResult {
+    return this.result;
+  }
+  get message(): string {
+    return this.statusMsg;
+  }
+  get boardState(): Board {
+    return this.board;
+  }
+
+  get canUndo(): boolean {
+    return !this.undoStack.isEmpty;
+  }
+  get canRedo(): boolean {
+    return !this.redoStack.isEmpty;
+  }
+
+  on<K extends EventType>(event: K, handler: EventHandler<K>): void {
+    this.events.on(event, handler as EventHandler<EventType>);
+  }
+
+  private transition(to: GamePhase): void {
+    const from = this.phase;
+    if (from === to) return;
+    this.events.emit("phaseChange", { from, to });
+    this.phase = to;
+  }
+
+  start(): void {
+    this.transition(GamePhase.Playing);
+  }
+
+  makeMove(pos: number): boolean {
+    if (this.phase !== GamePhase.Playing) return false;
+    if (pos < 0 || pos >= this.board.length)
+      throw new InvalidPositionError(pos);
+    if (this.board[pos] !== Mark.Empty) throw new CellOccupiedError(pos);
+
+    this.board[pos] = this.currentPlayer;
+    this.undoStack.push(pos);
+    this.redoStack.clear();
+    this.events.emit("move", { pos, mark: this.currentPlayer });
+    this.statusMsg = "";
+
+    const result = checkResult(this.board, this.size, this.winLength);
+    if (result.winner) {
+      this.result = result;
+      if (result.winner === "draw") {
+        this.transition(GamePhase.Draw);
+      } else {
+        this.transition(GamePhase.Won);
+      }
+      this.events.emit("gameEnd", { result });
+      this.saveStats(result);
+    } else {
+      this.currentPlayer = this.currentPlayer === Mark.X ? Mark.O : Mark.X;
+    }
+    return true;
+  }
+
+  undo(): boolean {
+    if (
+      this.phase !== GamePhase.Playing &&
+      this.phase !== GamePhase.Won &&
+      this.phase !== GamePhase.Draw
+    )
+      return false;
+    if (this.undoStack.isEmpty) {
+      this.statusMsg = "无棋可悔";
+      return false;
+    }
+    const pos = this.undoStack.pop()!;
+    this.board[pos] = Mark.Empty;
+    this.redoStack.push(pos);
+    this.currentPlayer = this.currentPlayer === Mark.X ? Mark.O : Mark.X;
+    this.result = { winner: null, winLine: null };
+    if (this.phase !== GamePhase.Playing) this.transition(GamePhase.Playing);
+    this.events.emit("undo", { pos });
+    this.statusMsg = "已悔棋";
+    return true;
+  }
+
+  redo(): boolean {
+    if (this.phase !== GamePhase.Playing) return false;
+    if (this.redoStack.isEmpty) {
+      this.statusMsg = "无棋可前";
+      return false;
+    }
+    const pos = this.redoStack.pop()!;
+    this.board[pos] = this.currentPlayer;
+    this.undoStack.push(pos);
+    this.events.emit("redo", { pos });
+    this.statusMsg = "已重做";
+
+    const result = checkResult(this.board, this.size, this.winLength);
+    if (result.winner) {
+      this.result = result;
+      if (result.winner === "draw") {
+        this.transition(GamePhase.Draw);
+      } else {
+        this.transition(GamePhase.Won);
+      }
+      this.events.emit("gameEnd", { result });
+    } else {
+      this.currentPlayer = this.currentPlayer === Mark.X ? Mark.O : Mark.X;
+    }
+    return true;
+  }
+
+  aiMove(): boolean {
+    if (this.phase !== GamePhase.Playing) return false;
+    const player = this.currentPlayer === Mark.X ? this.playerX : this.playerO;
+    if (!player.isAI) return false;
+
+    const strategy = player.difficulty
+      ? AI_STRATEGIES[player.difficulty]
+      : AI_STRATEGIES[AIDifficulty.Medium];
+    const pos = strategy.chooseMove(
+      this.board,
+      this.currentPlayer,
+      this.size,
+      this.winLength,
+    );
+    if (pos < 0) return false;
+    return this.makeMove(pos);
+  }
+
+  isCurrentPlayerAI(): boolean {
+    const player = this.currentPlayer === Mark.X ? this.playerX : this.playerO;
+    return player.isAI;
+  }
+
+  reset(): void {
+    this.board = new Array<Cell>(this.size * this.size).fill(Mark.Empty);
+    this.currentPlayer = Mark.X;
+    this.result = { winner: null, winLine: null };
+    this.statusMsg = "";
+    this.undoStack.clear();
+    this.redoStack.clear();
+    this.transition(GamePhase.Playing);
+  }
+
+  private saveStats(result: GameResult): void {
+    const s = this.stats as Mutable<GameStats>;
+    s.gamesPlayed++;
+    if (result.winner === Mark.X) s.xWins++;
+    else if (result.winner === Mark.O) s.oWins++;
+    else if (result.winner === "draw") s.draws++;
+    try {
+      const fs = require("fs");
+      fs.writeFileSync(DATA_FILE, JSON.stringify(this.stats, null, 2), "utf-8");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  getStatistics(): Readonly<GameStats> {
+    return this.stats;
+  }
+
+  render(useColor: boolean = true): string {
+    const lines: string[] = [];
+    const c = (text: string, color: Color): string =>
+      useColor ? `${COLOR_MAP[color]}${text}${ANSI.RESET}` : text;
+    const fmtPlayer = (m: Mark): string =>
+      m === Mark.X ? c("X", Color.Red) : c("O", Color.Green);
+
+    lines.push(c("===== 文字版井字棋 =====", Color.Cyan));
+    const playerInfo =
+      this.currentPlayer === Mark.X ? this.playerX : this.playerO;
+    lines.push(
+      `模式: ${this.mode}  当前: ${fmtPlayer(this.currentPlayer)} (${playerInfo.name})  棋盘: ${this.size}x${this.size}  连珠: ${this.winLength}`,
+    );
+
+    const winSet = new Set<number>(this.result.winLine ?? []);
+    const cells: string[] = [];
+    for (let i = 0; i < this.board.length; i++) {
+      const v = this.board[i];
+      if (v === Mark.Empty) {
+        cells.push(c((i + 1).toString(), Color.Gray));
+      } else if (winSet.has(i)) {
+        cells.push(c(v, Color.Yellow));
+      } else if (v === Mark.X) {
+        cells.push(c(v, Color.Red));
+      } else {
+        cells.push(c(v, Color.Green));
+      }
+    }
+
+    lines.push("");
+    const cellWidth = String(this.board.length).length;
+    for (let r = 0; r < this.size; r++) {
+      const rowCells: string[] = [];
+      for (let cc = 0; cc < this.size; cc++) {
+        rowCells.push(cells[r * this.size + cc].padEnd(cellWidth));
+      }
+      lines.push("  " + rowCells.join("  │  "));
+      if (r < this.size - 1) {
+        lines.push(
+          "  " +
+            Array.from({ length: this.size }, () =>
+              "─".repeat(cellWidth + 2),
+            ).join("┼"),
+        );
+      }
+    }
+
+    lines.push("");
+    if (this.phase === GamePhase.Won) {
+      lines.push(c(`${this.result.winner} 获胜!`, Color.Yellow));
+    } else if (this.phase === GamePhase.Draw) {
+      lines.push(c("平局!", Color.Yellow));
+    } else if (this.mode === GameMode.AIvAI) {
+      lines.push(c("[AI vs AI] 按回车执行下一步", Color.Cyan));
+    }
+
+    if (this.phase === GamePhase.Playing) {
+      lines.push(
+        c(
+          "操作: 输入位置编号落子  u 悔棋  y 重做  r 重新开始  m 返回菜单  q 退出",
+          Color.Cyan,
+        ),
+      );
+    } else {
+      lines.push(c("操作: r 重新开始  m 返回菜单  q 退出", Color.Cyan));
+    }
+
+    if (this.statusMsg) {
+      lines.push(c(this.statusMsg, Color.Yellow));
+    }
+
+    return lines.join("\n");
+  }
+}
+
+// ============================================================
+// 12. 统计数据
+// ============================================================
+
+function loadStats(): GameStats {
+  try {
+    const fs = require("fs");
+    if (fs.existsSync(DATA_FILE)) {
+      const data = JSON.parse(
+        fs.readFileSync(DATA_FILE, "utf-8"),
+      ) as Partial<GameStats>;
+      return {
+        gamesPlayed: data.gamesPlayed ?? 0,
+        xWins: data.xWins ?? 0,
+        oWins: data.oWins ?? 0,
+        draws: data.draws ?? 0,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { gamesPlayed: 0, xWins: 0, oWins: 0, draws: 0 };
+}
+
+// ============================================================
+// 13. 命令解析 (函数重载)
+// ============================================================
+
+function parseCommand(line: string, maxPos: number): ParsedCommand {
+  const input = line.trim().toLowerCase();
+  if (input === "q" || input === "quit") return { action: "quit" };
+  if (input === "m" || input === "menu") return { action: "menu" };
+  if (input === "r" || input === "restart") return { action: "restart" };
+  if (input === "u" || input === "undo") return { action: "undo" };
+  if (input === "y" || input === "redo") return { action: "redo" };
+  if (input === "s" || input === "stats") return { action: "stats" };
+  if (input === "h" || input === "?" || input === "help")
+    return { action: "help" };
+  if (input === "" || input === " ") return { action: "next" };
+
+  const pos = parseInt(input, 10);
+  if (!Number.isNaN(pos) && pos >= 1 && pos <= maxPos) {
+    return { action: "move", pos: pos - 1 };
+  }
+
+  return { action: "unknown", input: line };
+}
+
+// ============================================================
+// 14. 符号
+// ============================================================
+
+const SYM_SESSION = Symbol("session");
+
+interface GameSession {
+  [SYM_SESSION]: boolean;
+  readonly game: TicTacToeGame;
+}
+
+function createSession(
+  mode: GameMode,
+  size: number,
+  difficulty: AIDifficulty,
+): GameSession {
+  const cfg = BOARD_PRESETS[size] ?? BOARD_PRESETS[3];
+  const winLength = cfg.winLength;
+
+  const playerX: PlayerProfile = {
+    name: mode === GameMode.AIvAI ? "AI-X" : "玩家",
+    mark: Mark.X,
+    isAI: mode === GameMode.AIvAI,
+    difficulty: mode === GameMode.AIvAI ? difficulty : undefined,
   };
+
+  const playerO: PlayerProfile = {
+    name:
+      mode === GameMode.PvP ? "玩家2" : mode === GameMode.AIvAI ? "AI-O" : "AI",
+    mark: Mark.O,
+    isAI: mode !== GameMode.PvP,
+    difficulty: mode !== GameMode.PvP ? difficulty : undefined,
+  };
+
+  const game = new TicTacToeGame(mode, cfg.size, winLength, playerX, playerO);
+  game.start();
+
+  return { [SYM_SESSION]: true, game };
 }
 
-function applyMove(ctx: GameContext, pos: number): void {
-  if (ctx.result.winner) return;
-  if (pos < 0 || pos > 8) {
-    ctx.statusMsg = "位置无效, 请输入 1-9";
-    return;
-  }
-  if (ctx.board[pos] !== " ") {
-    ctx.statusMsg = "该位置已被占用";
-    return;
-  }
-  ctx.board[pos] = ctx.currentPlayer;
-  ctx.result = checkResult(ctx.board);
-  if (!ctx.result.winner) {
-    ctx.currentPlayer = ctx.currentPlayer === "X" ? "O" : "X";
-    ctx.statusMsg = "";
-  } else {
-    if (ctx.result.winner === "draw") ctx.statusMsg = "平局!";
-    else ctx.statusMsg = `${ctx.result.winner} 获胜!`;
-  }
-}
+// ============================================================
+// 15. 主程序
+// ============================================================
 
-function aiTurn(ctx: GameContext): void {
-  if (ctx.result.winner) return;
-  // cvc 中两方都是 AI
-  if (ctx.mode === "pvc" && ctx.currentPlayer !== "O") return;
-  if (ctx.mode === "pvp") return;
-  const m = bestMove(ctx.board, ctx.currentPlayer);
-  if (m >= 0) applyMove(ctx, m);
-}
-
-function showMenu(rl: readline.Interface): void {
+function showMenu(): void {
   process.stdout.write(ANSI.CLEAR + ANSI.HOME);
   console.log(ANSI.BOLD + ANSI.CYAN + "===== 文字版井字棋 =====" + ANSI.RESET);
   console.log("请选择模式:");
-  console.log("  1. pvp  - 玩家 vs 玩家");
-  console.log("  2. pvc  - 玩家 vs AI (minimax)");
-  console.log("  3. cvc  - AI vs AI 演示");
-  console.log("  q       - 退出");
+  console.log("  1 / pvp  - 玩家 vs 玩家");
+  console.log("  2 / pvc  - 玩家 vs AI");
+  console.log("  3 / cvc  - AI vs AI 演示");
+  console.log("  s        - 查看统计");
+  console.log("  q        - 退出");
+}
+
+function showAIDifficultyMenu(): void {
+  console.log("\n选择 AI 难度:");
+  console.log("  1 / easy   - 简单 (随机)");
+  console.log("  2 / medium - 中等 (启发式)");
+  console.log("  3 / hard   - 困难 (极小极大)");
+}
+
+function showBoardSizeMenu(): void {
+  console.log("\n选择棋盘大小:");
+  console.log("  3 - 3x3 (三连珠)");
+  console.log("  4 - 4x4 (四连珠)");
+  console.log("  5 - 5x5 (四连珠)");
+}
+
+function showStats(stats: Readonly<GameStats>): void {
+  console.log(ANSI.BOLD + ANSI.CYAN + "\n===== 统计 =====" + ANSI.RESET);
+  console.log(`  游戏次数: ${stats.gamesPlayed}`);
+  console.log(`  X 胜: ${stats.xWins}`);
+  console.log(`  O 胜: ${stats.oWins}`);
+  console.log(`  平局: ${stats.draws}`);
 }
 
 function main(): void {
@@ -279,38 +930,47 @@ function main(): void {
     output: process.stdout,
   });
 
-  let ctx: GameContext | null = null;
+  let session: GameSession | null = null;
   let inMenu = true;
+  let pendingMode: GameMode | null = null;
+  let pendingDifficulty: AIDifficulty = AIDifficulty.Medium;
+  let pendingSize: number = 3;
 
-  showMenu(rl);
+  const refresh = (): void => {
+    if (session) {
+      process.stdout.write(ANSI.CLEAR + ANSI.HOME);
+      process.stdout.write(session.game.render(true) + "\n");
+    }
+  };
+
+  showMenu();
   rl.setPrompt("选择> ");
   rl.prompt();
-
-  const refresh = () => {
-    if (ctx) render(ctx.board, ctx.mode, ctx.currentPlayer, ctx.result, ctx.statusMsg);
-  };
 
   rl.on("line", (line: string) => {
     const input = line.trim().toLowerCase();
 
     if (inMenu) {
       if (input === "1" || input === "pvp") {
-        ctx = newGame("pvp");
+        session = createSession(GameMode.PvP, pendingSize, pendingDifficulty);
         inMenu = false;
         refresh();
         rl.setPrompt("落子> ");
       } else if (input === "2" || input === "pvc") {
-        ctx = newGame("pvc");
+        pendingMode = GameMode.PvAI;
+        showAIDifficultyMenu();
+        rl.setPrompt("AI难度> ");
         inMenu = false;
-        refresh();
-        rl.setPrompt("落子> ");
+        // Set a flag for difficulty selection
+        (inMenu as unknown) = "difficulty";
       } else if (input === "3" || input === "cvc") {
-        ctx = newGame("cvc");
+        pendingMode = GameMode.AIvAI;
+        showAIDifficultyMenu();
+        rl.setPrompt("AI难度> ");
         inMenu = false;
-        // AI 先手
-        aiTurn(ctx);
-        refresh();
-        rl.setPrompt("回车继续> ");
+        (inMenu as unknown) = "difficulty";
+      } else if (input === "s" || input === "stats") {
+        showStats(loadStats());
       } else if (input === "q") {
         process.stdout.write(ANSI.CLEAR + ANSI.HOME);
         console.log("再见!");
@@ -322,50 +982,122 @@ function main(): void {
       return;
     }
 
-    if (!ctx) return;
-
-    if (input === "q") {
-      process.stdout.write(ANSI.CLEAR + ANSI.HOME);
-      console.log("再见!");
-      process.exit(0);
-    }
-    if (input === "m") {
-      inMenu = true;
-      ctx = null;
-      showMenu(rl);
-      rl.setPrompt("选择> ");
-      rl.prompt();
-      return;
-    }
-    if (input === "r") {
-      const mode = ctx.mode;
-      ctx = newGame(mode);
-      if (mode === "cvc") aiTurn(ctx);
-      refresh();
+    // Difficulty selection
+    if ((inMenu as unknown) === "difficulty") {
+      if (input === "1" || input === "easy")
+        pendingDifficulty = AIDifficulty.Easy;
+      else if (input === "2" || input === "medium")
+        pendingDifficulty = AIDifficulty.Medium;
+      else if (input === "3" || input === "hard")
+        pendingDifficulty = AIDifficulty.Hard;
+      else {
+        console.log(ANSI.RED + "无效输入, 默认中等" + ANSI.RESET);
+        pendingDifficulty = AIDifficulty.Medium;
+      }
+      showBoardSizeMenu();
+      rl.setPrompt("棋盘> ");
+      (inMenu as unknown) = "boardsize";
       rl.prompt();
       return;
     }
 
-    // cvc 模式：回车下一步
-    if (ctx.mode === "cvc") {
-      aiTurn(ctx);
-      refresh();
+    // Board size selection
+    if ((inMenu as unknown) === "boardsize") {
+      const size = parseInt(input, 10);
+      if (!Number.isNaN(size) && size >= 3 && size <= 5) {
+        pendingSize = size;
+      } else {
+        console.log(ANSI.RED + "无效输入, 默认 3x3" + ANSI.RESET);
+        pendingSize = 3;
+      }
+      if (pendingMode) {
+        session = createSession(pendingMode, pendingSize, pendingDifficulty);
+        inMenu = false;
+        refresh();
+        rl.setPrompt(pendingMode === GameMode.AIvAI ? "回车继续> " : "落子> ");
+      }
       rl.prompt();
       return;
     }
 
-    // pvc 模式：玩家落子后 AI 接管
-    const pos = parseInt(input, 10);
-    if (Number.isNaN(pos)) {
-      ctx.statusMsg = "请输入数字 1-9";
-      refresh();
-      rl.prompt();
-      return;
+    if (!session) return;
+
+    const cmd = parseCommand(line, session.game.boardState.length);
+
+    switch (cmd.action) {
+      case "quit":
+        process.stdout.write(ANSI.CLEAR + ANSI.HOME);
+        console.log("再见!");
+        process.exit(0);
+        break;
+      case "menu":
+        inMenu = true;
+        session = null;
+        showMenu();
+        rl.setPrompt("选择> ");
+        break;
+      case "restart":
+        session.game.reset();
+        break;
+      case "move":
+        if (
+          session.game.currentPhase === GamePhase.Playing &&
+          !session.game.isCurrentPlayerAI()
+        ) {
+          try {
+            session.game.makeMove(cmd.pos);
+          } catch (e) {
+            if (e instanceof TicTacError)
+              console.log(ANSI.RED + e.message + ANSI.RESET);
+          }
+          // AI turn
+          if (
+            session.game.currentPhase === GamePhase.Playing &&
+            session.game.isCurrentPlayerAI()
+          ) {
+            session.game.aiMove();
+          }
+        }
+        break;
+      case "next":
+        if (
+          session.game.mode === GameMode.AIvAI &&
+          session.game.currentPhase === GamePhase.Playing
+        ) {
+          session.game.aiMove();
+        }
+        break;
+      case "undo":
+        session.game.undo();
+        // Undo twice in PvAI mode (player + AI)
+        if (
+          session.game.mode === GameMode.PvAI &&
+          session.game.canUndo &&
+          session.game.isCurrentPlayerAI()
+        ) {
+          session.game.undo();
+        }
+        break;
+      case "redo":
+        session.game.redo();
+        break;
+      case "stats":
+        showStats(session.game.getStatistics());
+        break;
+      case "help":
+        console.log("\n帮助:");
+        console.log("  <编号>  在对应位置落子");
+        console.log("  u       悔棋");
+        console.log("  y       重做");
+        console.log("  r       重新开始");
+        console.log("  m       返回菜单");
+        console.log("  s       查看统计");
+        console.log("  q       退出");
+        break;
+      default:
+        console.log(ANSI.RED + "未知命令" + ANSI.RESET);
     }
-    applyMove(ctx, pos - 1);
-    if (!ctx.result.winner && ctx.mode === "pvc") {
-      aiTurn(ctx);
-    }
+
     refresh();
     rl.prompt();
   });

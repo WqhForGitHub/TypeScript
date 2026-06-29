@@ -11,7 +11,12 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "cli", "weather", "forecast"],
+  "keywords": [
+    "typescript",
+    "cli",
+    "weather",
+    "forecast"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

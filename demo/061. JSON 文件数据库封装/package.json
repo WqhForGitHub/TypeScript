@@ -3,13 +3,22 @@
   "version": "1.0.0",
   "description": "JSON 文件数据库封装，支持集合存储、CRUD 操作、查询运算符、索引、原子写入",
   "main": "dist/index.js",
-  "bin": { "json-db": "dist/index.js" },
+  "bin": {
+    "json-db": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "database", "json", "storage", "query", "index"],
+  "keywords": [
+    "typescript",
+    "database",
+    "json",
+    "storage",
+    "query",
+    "index"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

@@ -29,13 +29,17 @@
 ## 核心概念
 
 ### 插件 (Plugin)
+
 每个插件通过 `register()` 函数导出，包含元信息 (`meta`) 和初始化方法 (`init`)：
+
 - `meta.name` - 唯一标识
 - `meta.dependencies` - 声明的插件依赖
 - `init(context)` - 接收 PluginContext 进行命令/钩子/事件注册
 
 ### 插件上下文 (PluginContext)
+
 插件与宿主交互的唯一接口：
+
 - `registerCommand()` - 注册命令
 - `registerHook()` - 注册生命周期钩子
 - `emit()` / `on()` - 通过事件总线通信
@@ -43,17 +47,21 @@
 - `logger` - 日志工具
 
 ### 钩子 (Hooks)
+
 5 种生命周期钩子：
-| 钩子 | 触发时机 |
-|------|---------|
-| `onInit` | 所有插件初始化完成后 |
-| `beforeCommand` | 命令执行前 |
-| `afterCommand` | 命令执行后 |
-| `onError` | 发生错误时 |
-| `onDestroy` | 插件管理器销毁时 |
+
+| 钩子            | 触发时机             |
+| --------------- | -------------------- |
+| `onInit`        | 所有插件初始化完成后 |
+| `beforeCommand` | 命令执行前           |
+| `afterCommand`  | 命令执行后           |
+| `onError`       | 发生错误时           |
+| `onDestroy`     | 插件管理器销毁时     |
 
 ### 事件总线 (EventBus)
+
 插件间松耦合通信：
+
 - `calc` 插件发出 `calc:operation` 事件
 - `time` 插件发出 `timer:started` / `timer:stopped` 事件
 - `logger` 插件监听以上事件并记录日志
@@ -81,11 +89,13 @@
 ## 使用方法
 
 ### 安装依赖
+
 ```bash
 npm install
 ```
 
 ### 构建
+
 ```bash
 npm run build
 ```
@@ -93,11 +103,13 @@ npm run build
 ### 运行
 
 **交互式 REPL 模式** (无参数启动):
+
 ```bash
 npm start
 ```
 
 **单命令模式**:
+
 ```bash
 npm start -- greet 世界
 npm start -- greet 世界 --formal
@@ -115,27 +127,28 @@ npm start -- help
 ```
 
 ### 一键构建运行
+
 ```bash
 npm run dev
 ```
 
 ## 内置插件命令
 
-| 命令 | 别名 | 插件 | 说明 |
-|------|------|------|------|
-| `greet <name>` | hello, hi | greet | 向某人问候 |
-| `greet <name> --formal` | | greet | 正式问候 |
-| `bye <name>` | goodbye | greet | 告别 |
-| `calc <op> <a> <b>` | compute, math | calc | 数学运算 (add/sub/mul/div) |
-| `sqrt <n>` | | calc | 平方根 |
-| `time` | now | time | 当前时间 |
-| `time --format <fmt>` | | time | iso/locale/unix 格式 |
-| `timer start <name>` | stopwatch | time | 启动计时器 |
-| `timer stop <name>` | | time | 停止计时器 |
-| `timer list` | | time | 列出运行中的计时器 |
-| `logs` | history | logger | 查看操作日志 |
-| `logs --clear` | | logger | 清除日志 |
-| `plugins` | list-plugins | logger | 列出已加载插件 |
+| 命令                    | 别名          | 插件   | 说明                       |
+| ----------------------- | ------------- | ------ | -------------------------- |
+| `greet <name>`          | hello, hi     | greet  | 向某人问候                 |
+| `greet <name> --formal` |               | greet  | 正式问候                   |
+| `bye <name>`            | goodbye       | greet  | 告别                       |
+| `calc <op> <a> <b>`     | compute, math | calc   | 数学运算 (add/sub/mul/div) |
+| `sqrt <n>`              |               | calc   | 平方根                     |
+| `time`                  | now           | time   | 当前时间                   |
+| `time --format <fmt>`   |               | time   | iso/locale/unix 格式       |
+| `timer start <name>`    | stopwatch     | time   | 启动计时器                 |
+| `timer stop <name>`     |               | time   | 停止计时器                 |
+| `timer list`            |               | time   | 列出运行中的计时器         |
+| `logs`                  | history       | logger | 查看操作日志               |
+| `logs --clear`          |               | logger | 清除日志                   |
+| `plugins`               | list-plugins  | logger | 列出已加载插件             |
 
 ## 示例输出
 

@@ -1,44 +1,20 @@
 #!/usr/bin/env node
 /**
- * 迷宫生成器与求解器 (Maze Generator & Solver)
- * -------------------------------------------
- * 命令行界面：
- *   generate <w> <h> [-s seed] [-o file]
- *       生成 w x h 的迷宫 (单元格数), 使用递归回溯算法
- *       -s seed  指定随机种子 (整数)
- *       -o file  保存到文件 (默认 maze_<w>x<h>_<seed>.txt)
+ * 迷宫生成器与求解器 (Maze Generator & Solver) — Enhanced Edition
  *
- *   solve <maze-file> [-m bfs|dfs] [-o file]
- *       求解迷宫, 默认 BFS (最短路径)
- *       -m bfs  广度优先 (保证最短)
- *       -m dfs  深度优先 (不保证最短)
- *       -o file 保存求解结果
- *
- *   animate <maze-file> [-m bfs|dfs]
- *       动画展示求解过程 (步进显示)
- *
- *   show <maze-file>
- *       显示迷宫
- *
- *   help / h
- *       帮助
- *
- * 显示：
- *   █ 墙
- *   (空格) 通路
- *   S 起点 (左上)
- *   E 终点 (右下)
- *   ● 路径
- *   · 已探索
- *
- * 文件格式：
- *   第一行: w h
- *   之后: 字符矩阵 (# 或空格)
+ * TypeScript features: enums, generics, discriminated unions, mapped types,
+ * conditional types, template literal types, type guards, utility types,
+ * tuples, abstract classes, function overloads, as const, custom errors,
+ * generators, symbols, satisfies, getters/setters.
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
+
+// ============================================================
+// 1. 常量与枚举
+// ============================================================
 
 const ANSI = {
   RESET: "\x1b[0m",
@@ -53,607 +29,957 @@ const ANSI = {
   GRAY: "\x1b[90m",
   HIDE_CURSOR: "\x1b[?25l",
   SHOW_CURSOR: "\x1b[?25h",
-};
+} as const;
 
-// ============== 简单种子随机 ==============
-class SeededRandom {
-  private state: number;
-  constructor(seed: number) {
-    this.state = seed >>> 0;
-    if (this.state === 0) this.state = 1;
-  }
-  next(): number {
-    // LCG (Linear Congruential Generator)
-    this.state = (Math.imul(this.state, 1664525) + 1013904223) >>> 0;
-    return this.state / 0xffffffff;
-  }
-  nextInt(maxExclusive: number): number {
-    return Math.floor(this.next() * maxExclusive);
-  }
+enum GenAlgorithm {
+  Backtracker = "backtracker",
+  Prim = "prim",
+  Kruskal = "kruskal",
+}
+enum SolveAlgorithm {
+  BFS = "bfs",
+  DFS = "dfs",
+  AStar = "astar",
+}
+enum Color {
+  Red = "red",
+  Green = "green",
+  Yellow = "yellow",
+  Blue = "blue",
+  Cyan = "cyan",
+  Gray = "gray",
+  Bold = "bold",
 }
 
-// ============== 迷宫数据结构 ==============
-// 用 (2w+1) x (2h+1) 字符矩阵表示, 偶数索引为单元格, 奇数索引为墙
-// '#' 墙, ' ' 路
-type MazeGrid = string[][];
+type ColorCode = (typeof ANSI)[keyof typeof ANSI];
+
+const COLOR_MAP: Record<Color, ColorCode> = {
+  [Color.Red]: ANSI.RED,
+  [Color.Green]: ANSI.GREEN,
+  [Color.Yellow]: ANSI.YELLOW,
+  [Color.Blue]: ANSI.BLUE,
+  [Color.Cyan]: ANSI.CYAN,
+  [Color.Gray]: ANSI.GRAY,
+  [Color.Bold]: ANSI.BOLD,
+} as const satisfies Record<Color, ColorCode>;
+
+type Grid = string[][];
+type Coord = readonly [number, number];
 
 interface Maze {
-  width: number; // 单元格列数
-  height: number; // 单元格行数
-  grid: MazeGrid; // (2h+1) x (2w+1)
-}
-
-function createMaze(w: number, h: number, seed: number): Maze {
-  const gw = 2 * w + 1;
-  const gh = 2 * h + 1;
-  // 初始全是墙
-  const grid: MazeGrid = [];
-  for (let y = 0; y < gh; y++) {
-    grid.push(new Array(gw).fill("#"));
-  }
-
-  // 单元格 对应 grid[2r+1][2c+1]
-  const visited: boolean[][] = [];
-  for (let r = 0; r < h; r++) {
-    visited.push(new Array(w).fill(false));
-  }
-
-  const rng = new SeededRandom(seed);
-  // 递归回溯 (用栈避免递归过深)
-  const stack: Array<{ r: number; c: number }> = [];
-  const start = { r: 0, c: 0 };
-  visited[0][0] = true;
-  grid[1][1] = " ";
-  stack.push(start);
-
-  const dirs = [
-    { dr: -1, dc: 0 },
-    { dr: 1, dc: 0 },
-    { dr: 0, dc: -1 },
-    { dr: 0, dc: 1 },
-  ];
-
-  while (stack.length > 0) {
-    const cur = stack[stack.length - 1];
-    // 找未访问邻居
-    const neighbors: Array<{ r: number; c: number; dr: number; dc: number }> = [];
-    for (const d of dirs) {
-      const nr = cur.r + d.dr;
-      const nc = cur.c + d.dc;
-      if (nr >= 0 && nr < h && nc >= 0 && nc < w && !visited[nr][nc]) {
-        neighbors.push({ r: nr, c: nc, dr: d.dr, dc: d.dc });
-      }
-    }
-    if (neighbors.length === 0) {
-      stack.pop();
-      continue;
-    }
-    // 随机选一个
-    const next = neighbors[rng.nextInt(neighbors.length)];
-    // 打通中间的墙
-    const wallR = 2 * cur.r + 1 + next.dr;
-    const wallC = 2 * cur.c + 1 + next.dc;
-    grid[wallR][wallC] = " ";
-    grid[2 * next.r + 1][2 * next.c + 1] = " ";
-    visited[next.r][next.c] = true;
-    stack.push({ r: next.r, c: next.c });
-  }
-
-  // 起点 (0,0) 单元格 -> grid[1][1]
-  // 终点 (h-1, w-1) 单元格 -> grid[2h-1][2w-1]
-  return { width: w, height: h, grid };
-}
-
-// ============== 求解 ==============
-interface SolveStep {
-  x: number;
-  y: number;
-  parent: { x: number; y: number } | null;
+  readonly width: number;
+  readonly height: number;
+  readonly grid: Grid;
+  readonly seed: number;
+  readonly algorithm: GenAlgorithm;
 }
 
 interface SolveResult {
-  path: Array<{ x: number; y: number }>; // 最短路径 (含起点终点)
-  explored: Array<{ x: number; y: number }>; // 探索过的所有点
-  method: "bfs" | "dfs";
-  found: boolean;
+  readonly path: Coord[];
+  readonly explored: Coord[];
+  readonly method: SolveAlgorithm;
+  readonly found: boolean;
+  readonly elapsedMs: number;
 }
 
-function getStartEnd(maze: Maze): {
-  start: { x: number; y: number };
-  end: { x: number; y: number };
-} {
-  return {
-    start: { x: 1, y: 1 },
-    end: { x: 2 * maze.width - 1, y: 2 * maze.height - 1 },
-  };
+interface MazeStats {
+  readonly totalGenerated: number;
+  readonly totalSolved: number;
+  readonly bestSolveTime: Partial<Record<string, number>>;
+  readonly [key: string]: unknown;
 }
 
-function isPath(grid: MazeGrid, x: number, y: number): boolean {
-  if (y < 0 || y >= grid.length) return false;
-  if (x < 0 || x >= grid[0].length) return false;
-  return grid[y][x] !== "#";
-}
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-function solve(maze: Maze, method: "bfs" | "dfs"): SolveResult {
-  const { start, end } = getStartEnd(maze);
-  const visited: boolean[][] = [];
-  for (let y = 0; y < maze.grid.length; y++) {
-    visited.push(new Array(maze.grid[0].length).fill(false));
+const DATA_FILE = path.join(
+  process.env.USERPROFILE || process.env.HOME || ".",
+  ".maze_data.json",
+);
+
+// ============================================================
+// 2. 判别联合
+// ============================================================
+
+type MazeEvent =
+  | {
+      readonly type: "generate";
+      readonly width: number;
+      readonly height: number;
+      readonly algorithm: GenAlgorithm;
+    }
+  | {
+      readonly type: "solve";
+      readonly method: SolveAlgorithm;
+      readonly found: boolean;
+    }
+  | { readonly type: "save"; readonly file: string }
+  | { readonly type: "load"; readonly file: string };
+
+type EventOfType<T extends MazeEvent["type"]> = Extract<MazeEvent, { type: T }>;
+
+type ParsedCommand =
+  | {
+      readonly action: "generate";
+      readonly width: number;
+      readonly height: number;
+      readonly algorithm: GenAlgorithm;
+      readonly seed: number | null;
+      readonly output: string | null;
+    }
+  | {
+      readonly action: "solve";
+      readonly file: string;
+      readonly method: SolveAlgorithm;
+      readonly output: string | null;
+    }
+  | {
+      readonly action: "animate";
+      readonly file: string;
+      readonly method: SolveAlgorithm;
+    }
+  | { readonly action: "show"; readonly file: string }
+  | { readonly action: "help" }
+  | { readonly action: "quit" }
+  | { readonly action: "unknown"; readonly input: string };
+
+// ============================================================
+// 3. 自定义错误
+// ============================================================
+
+abstract class MazeError extends Error {
+  abstract readonly code: string;
+  constructor(msg: string) {
+    super(msg);
+    this.name = this.constructor.name;
   }
-  const explored: Array<{ x: number; y: number }> = [];
-  const parents: Record<string, { x: number; y: number } | null> = {};
-  const key = (x: number, y: number) => `${x},${y}`;
+}
 
-  // 用数组当队列 (BFS) 或栈 (DFS)
-  const frontier: Array<{ x: number; y: number }> = [start];
-  visited[start.y][start.x] = true;
-  parents[key(start.x, start.y)] = null;
+class InvalidSizeError extends MazeError {
+  readonly code = "INVALID_SIZE";
+  constructor(msg: string) {
+    super(msg);
+  }
+}
 
-  const dirs = [
-    { dx: 0, dy: -1 },
-    { dx: 0, dy: 1 },
-    { dx: -1, dy: 0 },
-    { dx: 1, dy: 0 },
+class MazeFileError extends MazeError {
+  readonly code = "MAZE_FILE";
+  constructor(msg: string) {
+    super(msg);
+  }
+}
+
+class NoSolutionError extends MazeError {
+  readonly code = "NO_SOLUTION";
+  constructor() {
+    super("迷宫无解");
+  }
+}
+
+// ============================================================
+// 4. 类型守卫
+// ============================================================
+
+function isGenAlgorithm(value: unknown): value is GenAlgorithm {
+  return (
+    typeof value === "string" &&
+    Object.values(GenAlgorithm).includes(value as GenAlgorithm)
+  );
+}
+
+function isSolveAlgorithm(value: unknown): value is SolveAlgorithm {
+  return (
+    typeof value === "string" &&
+    Object.values(SolveAlgorithm).includes(value as SolveAlgorithm)
+  );
+}
+
+// ============================================================
+// 5. 种子随机数
+// ============================================================
+
+class SeededRandom {
+  private state: number;
+  readonly seed: number;
+  constructor(seed: number) {
+    this.seed = seed >>> 0 || 1;
+    this.state = this.seed;
+  }
+  next(): number {
+    this.state = (Math.imul(this.state, 1664525) + 1013904223) >>> 0;
+    return this.state / 0xffffffff;
+  }
+  nextInt(max: number): number {
+    return Math.floor(this.next() * max);
+  }
+}
+
+// ============================================================
+// 6. 生成器
+// ============================================================
+
+function* iterateGrid(grid: Grid): Generator<{
+  readonly x: number;
+  readonly y: number;
+  readonly cell: string;
+}> {
+  for (let y = 0; y < grid.length; y++) {
+    for (let x = 0; x < grid[y]!.length; x++) {
+      yield { x, y, cell: grid[y]![x]! };
+    }
+  }
+}
+
+function* neighbors4(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): Generator<Coord> {
+  const dirs: readonly Coord[] = [
+    [0, -1],
+    [0, 1],
+    [-1, 0],
+    [1, 0],
   ];
+  for (const [dx, dy] of dirs) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx >= 0 && nx < w && ny >= 0 && ny < h) yield [nx, ny];
+  }
+}
 
-  let found = false;
-  while (frontier.length > 0) {
-    let cur: { x: number; y: number };
-    if (method === "bfs") {
-      cur = frontier.shift() as { x: number; y: number };
-    } else {
-      cur = frontier.pop() as { x: number; y: number };
+// ============================================================
+// 7. 抽象迷宫生成器
+// ============================================================
+
+abstract class MazeGenerator {
+  protected readonly rng: SeededRandom;
+  constructor(
+    readonly width: number,
+    readonly height: number,
+    seed: number,
+  ) {
+    this.rng = new SeededRandom(seed);
+  }
+  abstract generate(): Maze;
+  protected get algorithm(): GenAlgorithm {
+    return GenAlgorithm.Backtracker;
+  }
+
+  protected createEmptyGrid(): Grid {
+    const gw = 2 * this.width + 1;
+    const gh = 2 * this.height + 1;
+    const grid: Grid = [];
+    for (let y = 0; y < gh; y++) {
+      grid.push(new Array(gw).fill("#"));
     }
-    explored.push(cur);
-    if (cur.x === end.x && cur.y === end.y) {
-      found = true;
-      break;
+    return grid;
+  }
+}
+
+class BacktrackerGenerator extends MazeGenerator {
+  get algorithm(): GenAlgorithm {
+    return GenAlgorithm.Backtracker;
+  }
+
+  generate(): Maze {
+    const grid = this.createEmptyGrid();
+    const w = this.width;
+    const h = this.height;
+    const visited: boolean[][] = Array.from({ length: h }, () =>
+      new Array(w).fill(false),
+    );
+    const stack: Array<{ r: number; c: number }> = [{ r: 0, c: 0 }];
+    visited[0][0] = true;
+    grid[1]![1] = " ";
+
+    const dirs = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ];
+    while (stack.length > 0) {
+      const cur = stack[stack.length - 1]!;
+      const unvisited: Array<{ r: number; c: number; dr: number; dc: number }> =
+        [];
+      for (const [dr, dc] of dirs) {
+        const nr = cur.r + dr;
+        const nc = cur.c + dc;
+        if (nr >= 0 && nr < h && nc >= 0 && nc < w && !visited[nr][nc]) {
+          unvisited.push({ r: nr, c: nc, dr, dc });
+        }
+      }
+      if (unvisited.length === 0) {
+        stack.pop();
+        continue;
+      }
+      const next = unvisited[this.rng.nextInt(unvisited.length)]!;
+      grid[2 * cur.r + 1 + next.dr]![2 * cur.c + 1 + next.dc] = " ";
+      grid[2 * next.r + 1]![2 * next.c + 1] = " ";
+      visited[next.r][next.c] = true;
+      stack.push({ r: next.r, c: next.c });
     }
-    for (const d of dirs) {
-      const nx = cur.x + d.dx;
-      const ny = cur.y + d.dy;
-      if (isPath(maze.grid, nx, ny) && !visited[ny][nx]) {
-        visited[ny][nx] = true;
-        parents[key(nx, ny)] = cur;
-        frontier.push({ x: nx, y: ny });
+    return {
+      width: w,
+      height: h,
+      grid,
+      seed: this.rng.seed,
+      algorithm: this.algorithm,
+    };
+  }
+}
+
+class PrimGenerator extends MazeGenerator {
+  get algorithm(): GenAlgorithm {
+    return GenAlgorithm.Prim;
+  }
+
+  generate(): Maze {
+    const grid = this.createEmptyGrid();
+    const w = this.width;
+    const h = this.height;
+    const visited: boolean[][] = Array.from({ length: h }, () =>
+      new Array(w).fill(false),
+    );
+    visited[0][0] = true;
+    grid[1]![1] = " ";
+    const frontier: Array<{ r: number; c: number; pr: number; pc: number }> =
+      [];
+    for (const [dr, dc] of [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ]) {
+      const nr = dr,
+        nc = dc;
+      if (nr >= 0 && nr < h && nc >= 0 && nc < w)
+        frontier.push({ r: nr, c: nc, pr: 0, pc: 0 });
+    }
+    while (frontier.length > 0) {
+      const idx = this.rng.nextInt(frontier.length);
+      const cell = frontier.splice(idx, 1)[0]!;
+      if (visited[cell.r][cell.c]) continue;
+      visited[cell.r][cell.c] = true;
+      grid[2 * cell.r + 1]![2 * cell.c + 1] = " ";
+      grid[2 * cell.pr + 1 + (cell.r - cell.pr)]![
+        2 * cell.pc + 1 + (cell.c - cell.pc)
+      ] = " ";
+      for (const [dr, dc] of [
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+        [0, 1],
+      ]) {
+        const nr = cell.r + dr;
+        const nc = cell.c + dc;
+        if (nr >= 0 && nr < h && nc >= 0 && nc < w && !visited[nr][nc]) {
+          frontier.push({ r: nr, c: nc, pr: cell.r, pc: cell.c });
+        }
       }
     }
+    return { width: w, height: h, grid, seed: 0, algorithm: this.algorithm };
+  }
+}
+
+class KruskalGenerator extends MazeGenerator {
+  get algorithm(): GenAlgorithm {
+    return GenAlgorithm.Kruskal;
   }
 
-  // 回溯路径
-  const path: Array<{ x: number; y: number }> = [];
-  if (found) {
-    let cur: { x: number; y: number } | null = end;
+  generate(): Maze {
+    const grid = this.createEmptyGrid();
+    const w = this.width;
+    const h = this.height;
+    const parent: number[] = Array.from({ length: w * h }, (_, i) => i);
+    const find = (x: number): number => {
+      while (parent[x] !== x) {
+        parent[x] = parent[parent[x]!];
+        x = parent[x]!;
+      }
+      return x;
+    };
+    const edges: Array<{ r1: number; c1: number; r2: number; c2: number }> = [];
+    for (let r = 0; r < h; r++) {
+      for (let c = 0; c < w; c++) {
+        if (c < w - 1) edges.push({ r1: r, c1: c, r2: r, c2: c + 1 });
+        if (r < h - 1) edges.push({ r1: r, c1: c, r2: r + 1, c2: c });
+      }
+    }
+    // Shuffle
+    for (let i = edges.length - 1; i > 0; i--) {
+      const j = this.rng.nextInt(i + 1);
+      [edges[i], edges[j]] = [edges[j]!, edges[i]!];
+    }
+    for (const e of edges) {
+      const a = find(e.r1 * w + e.c1);
+      const b = find(e.r2 * w + e.c2);
+      if (a === b) continue;
+      parent[a] = b;
+      grid[2 * e.r1 + 1]![2 * e.c1 + 1] = " ";
+      grid[2 * e.r2 + 1]![2 * e.c2 + 1] = " ";
+      grid[e.r1 + e.r2 + 1]![e.c1 + e.c2 + 1] = " ";
+    }
+    return { width: w, height: h, grid, seed: 0, algorithm: this.algorithm };
+  }
+}
+
+function createGenerator(
+  width: number,
+  height: number,
+  seed: number,
+  algo: GenAlgorithm,
+): MazeGenerator {
+  switch (algo) {
+    case GenAlgorithm.Prim:
+      return new PrimGenerator(width, height, seed);
+    case GenAlgorithm.Kruskal:
+      return new KruskalGenerator(width, height, seed);
+    default:
+      return new BacktrackerGenerator(width, height, seed);
+  }
+}
+
+// ============================================================
+// 8. 抽象求解器
+// ============================================================
+
+abstract class MazeSolver {
+  abstract readonly algorithm: SolveAlgorithm;
+  abstract solve(maze: Maze): SolveResult;
+  protected getStartEnd(maze: Maze): { start: Coord; end: Coord } {
+    return { start: [1, 1], end: [2 * maze.width - 1, 2 * maze.height - 1] };
+  }
+  protected isPath(grid: Grid, x: number, y: number): boolean {
+    if (y < 0 || y >= grid.length || x < 0 || x >= grid[0]!.length)
+      return false;
+    return grid[y]![x] !== "#";
+  }
+  protected reconstructPath(parents: Map<string, Coord>, end: Coord): Coord[] {
+    const path: Coord[] = [];
+    let cur: Coord | null = end;
     while (cur) {
       path.unshift(cur);
-      cur = parents[key(cur.x, cur.y)];
+      cur = parents.get(`${cur[0]},${cur[1]}`) ?? null;
     }
+    return path;
   }
-  return { path, explored, method, found };
 }
 
-// ============== 渲染 ==============
+class BfsSolver extends MazeSolver {
+  readonly algorithm = SolveAlgorithm.BFS;
+  solve(maze: Maze): SolveResult {
+    const start = Date.now();
+    const { start: s, end: e } = this.getStartEnd(maze);
+    const visited = new Set<string>();
+    const parents = new Map<string, Coord>();
+    const explored: Coord[] = [];
+    const queue: Coord[] = [s];
+    visited.add(`${s[0]},${s[1]}`);
+    let found = false;
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      explored.push(cur);
+      if (cur[0] === e[0] && cur[1] === e[1]) {
+        found = true;
+        break;
+      }
+      for (const [nx, ny] of neighbors4(
+        cur[0],
+        cur[1],
+        maze.grid[0]!.length,
+        maze.grid.length,
+      )) {
+        const key = `${nx},${ny}`;
+        if (this.isPath(maze.grid, nx, ny) && !visited.has(key)) {
+          visited.add(key);
+          parents.set(key, cur);
+          queue.push([nx, ny]);
+        }
+      }
+    }
+    const path = found ? this.reconstructPath(parents, e) : [];
+    return {
+      path,
+      explored,
+      method: this.algorithm,
+      found,
+      elapsedMs: Date.now() - start,
+    };
+  }
+}
+
+class DfsSolver extends MazeSolver {
+  readonly algorithm = SolveAlgorithm.DFS;
+  solve(maze: Maze): SolveResult {
+    const start = Date.now();
+    const { start: s, end: e } = this.getStartEnd(maze);
+    const visited = new Set<string>();
+    const parents = new Map<string, Coord>();
+    const explored: Coord[] = [];
+    const stack: Coord[] = [s];
+    visited.add(`${s[0]},${s[1]}`);
+    let found = false;
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      explored.push(cur);
+      if (cur[0] === e[0] && cur[1] === e[1]) {
+        found = true;
+        break;
+      }
+      for (const [nx, ny] of neighbors4(
+        cur[0],
+        cur[1],
+        maze.grid[0]!.length,
+        maze.grid.length,
+      )) {
+        const key = `${nx},${ny}`;
+        if (this.isPath(maze.grid, nx, ny) && !visited.has(key)) {
+          visited.add(key);
+          parents.set(key, cur);
+          stack.push([nx, ny]);
+        }
+      }
+    }
+    const path = found ? this.reconstructPath(parents, e) : [];
+    return {
+      path,
+      explored,
+      method: this.algorithm,
+      found,
+      elapsedMs: Date.now() - start,
+    };
+  }
+}
+
+class AStarSolver extends MazeSolver {
+  readonly algorithm = SolveAlgorithm.AStar;
+  solve(maze: Maze): SolveResult {
+    const start = Date.now();
+    const { start: s, end: e } = this.getStartEnd(maze);
+    const visited = new Set<string>();
+    const parents = new Map<string, Coord>();
+    const gScore = new Map<string, number>();
+    const explored: Coord[] = [];
+    const heuristic = (x: number, y: number): number =>
+      Math.abs(x - e[0]) + Math.abs(y - e[1]);
+    const open: Array<{ coord: Coord; f: number }> = [
+      { coord: s, f: heuristic(s[0], s[1]) },
+    ];
+    gScore.set(`${s[0]},${s[1]}`, 0);
+    let found = false;
+    while (open.length > 0) {
+      open.sort((a, b) => a.f - b.f);
+      const cur = open.shift()!;
+      const key = `${cur.coord[0]},${cur.coord[1]}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      explored.push(cur.coord);
+      if (cur.coord[0] === e[0] && cur.coord[1] === e[1]) {
+        found = true;
+        break;
+      }
+      for (const [nx, ny] of neighbors4(
+        cur.coord[0],
+        cur.coord[1],
+        maze.grid[0]!.length,
+        maze.grid.length,
+      )) {
+        const nkey = `${nx},${ny}`;
+        if (!this.isPath(maze.grid, nx, ny) || visited.has(nkey)) continue;
+        const tentG = (gScore.get(key) ?? 0) + 1;
+        if (tentG < (gScore.get(nkey) ?? Infinity)) {
+          gScore.set(nkey, tentG);
+          parents.set(nkey, cur.coord);
+          open.push({ coord: [nx, ny], f: tentG + heuristic(nx, ny) });
+        }
+      }
+    }
+    const path = found ? this.reconstructPath(parents, e) : [];
+    return {
+      path,
+      explored,
+      method: this.algorithm,
+      found,
+      elapsedMs: Date.now() - start,
+    };
+  }
+}
+
+function createSolver(method: SolveAlgorithm): MazeSolver {
+  switch (method) {
+    case SolveAlgorithm.DFS:
+      return new DfsSolver();
+    case SolveAlgorithm.AStar:
+      return new AStarSolver();
+    default:
+      return new BfsSolver();
+  }
+}
+
+// ============================================================
+// 9. 迷宫分析
+// ============================================================
+
+function analyzeMaze(
+  maze: Maze,
+  result: SolveResult,
+): { deadEnds: number; junctions: number; difficulty: number } {
+  let deadEnds = 0;
+  let junctions = 0;
+  for (const { x, y, cell } of iterateGrid(maze.grid)) {
+    if (cell !== " ") continue;
+    let pathCount = 0;
+    for (const [nx, ny] of neighbors4(
+      x,
+      y,
+      maze.grid[0]!.length,
+      maze.grid.length,
+    )) {
+      if (maze.grid[ny]![nx] !== "#") pathCount++;
+    }
+    if (pathCount === 1) deadEnds++;
+    else if (pathCount >= 3) junctions++;
+  }
+  const difficulty = Math.round(
+    deadEnds * 0.5 + junctions * 0.3 + result.path.length * 0.1,
+  );
+  return { deadEnds, junctions, difficulty };
+}
+
+// ============================================================
+// 10. 渲染
+// ============================================================
+
+function colorize(text: string, color: Color): string {
+  return `${COLOR_MAP[color]}${text}${ANSI.RESET}`;
+}
+
 function renderMaze(
   maze: Maze,
-  options: {
-    path?: Array<{ x: number; y: number }>;
-    explored?: Array<{ x: number; y: number }>;
-    showStartEnd?: boolean;
-  } = {}
-): void {
-  const { grid } = maze;
-  const pathSet = new Set((options.path || []).map((p) => `${p.x},${p.y}`));
+  result?: SolveResult,
+  useColor: boolean = true,
+): string {
+  const c = (t: string, col: Color): string =>
+    useColor ? `${COLOR_MAP[col]}${t}${ANSI.RESET}` : t;
+  const pathSet = new Set(result?.path.map((p) => `${p[0]},${p[1]}`) ?? []);
   const exploredSet = new Set(
-    (options.explored || []).map((p) => `${p.x},${p.y}`)
+    result?.explored.map((p) => `${p[0]},${p[1]}`) ?? [],
   );
-  const { start, end } = getStartEnd(maze);
-
   const lines: string[] = [];
-  for (let y = 0; y < grid.length; y++) {
+  for (let y = 0; y < maze.grid.length; y++) {
     let row = "";
-    for (let x = 0; x < grid[0].length; x++) {
-      const cell = grid[y][x];
+    for (let x = 0; x < maze.grid[y]!.length; x++) {
+      const cell = maze.grid[y]![x]!;
       const k = `${x},${y}`;
-      if (cell === "#") {
-        row += ANSI.GRAY + "█" + ANSI.RESET;
-      } else if (options.showStartEnd && x === start.x && y === start.y) {
-        row += ANSI.GREEN + "S" + ANSI.RESET;
-      } else if (options.showStartEnd && x === end.x && y === end.y) {
-        row += ANSI.RED + "E" + ANSI.RESET;
-      } else if (pathSet.has(k)) {
-        row += ANSI.YELLOW + "●" + ANSI.RESET;
-      } else if (exploredSet.has(k)) {
-        row += ANSI.BLUE + "·" + ANSI.RESET;
-      } else {
-        row += " ";
-      }
+      if (x === 1 && y === 1) row += c("S", Color.Green);
+      else if (x === 2 * maze.width - 1 && y === 2 * maze.height - 1)
+        row += c("E", Color.Red);
+      else if (cell === "#") row += c("#", Color.Gray);
+      else if (pathSet.has(k)) row += c("*", Color.Yellow);
+      else if (exploredSet.has(k)) row += c(".", Color.Blue);
+      else row += " ";
     }
     lines.push(row);
   }
-  console.log(lines.join("\n"));
+  return lines.join("\n");
 }
 
-function renderMazeWithStats(
-  maze: Maze,
-  result: SolveResult,
-  elapsedMs: number
-): void {
-  process.stdout.write(ANSI.CLEAR + ANSI.HOME);
-  console.log(
-    ANSI.BOLD +
-      ANSI.CYAN +
-      `===== 迷宫求解 (${result.method.toUpperCase()}) =====` +
-      ANSI.RESET
-  );
-  console.log(
-    `尺寸: ${maze.width} x ${maze.height}   ` +
-      `找到路径: ${result.found ? ANSI.GREEN + "是" : ANSI.RED + "否"}${ANSI.RESET}   ` +
-      `路径长度: ${result.path.length}   ` +
-      `探索点数: ${result.explored.length}   ` +
-      `耗时: ${elapsedMs}ms`
-  );
-  console.log("");
-  renderMaze(maze, {
-    path: result.path,
-    explored: result.explored,
-    showStartEnd: true,
-  });
-  console.log("");
-  console.log(
-    ANSI.GRAY + "● 路径  · 已探索  S 起点  E 终点  █ 墙" + ANSI.RESET
-  );
-}
+// ============================================================
+// 11. 文件 I/O
+// ============================================================
 
-// ============== 文件 I/O ==============
 function saveMaze(maze: Maze, file: string): void {
-  const lines: string[] = [];
-  lines.push(`${maze.width} ${maze.height}`);
-  for (const row of maze.grid) {
-    lines.push(row.join("").replace(/ /g, " ").replace(/#/g, "#"));
-  }
+  const lines: string[] = [
+    `${maze.width} ${maze.height} ${maze.seed} ${maze.algorithm}`,
+  ];
+  for (const row of maze.grid) lines.push(row.join(""));
   fs.writeFileSync(file, lines.join("\n") + "\n", "utf-8");
 }
 
 function loadMaze(file: string): Maze {
   const content = fs.readFileSync(file, "utf-8");
   const lines = content.split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length < 2) throw new Error("迷宫文件格式无效");
-  const [wStr, hStr] = lines[0].split(/\s+/);
-  const w = parseInt(wStr, 10);
-  const h = parseInt(hStr, 10);
-  if (Number.isNaN(w) || Number.isNaN(h)) throw new Error("迷宫尺寸无效");
-  const grid: MazeGrid = [];
-  for (let i = 1; i < lines.length; i++) {
-    grid.push(lines[i].split(""));
-  }
-  return { width: w, height: h, grid };
+  if (lines.length < 2) throw new MazeFileError("文件格式无效");
+  const [wStr, hStr, seedStr, algoStr] = lines[0]!.split(/\s+/);
+  const width = parseInt(wStr ?? "0", 10);
+  const height = parseInt(hStr ?? "0", 10);
+  if (Number.isNaN(width) || Number.isNaN(height) || width < 1 || height < 1)
+    throw new MazeFileError("尺寸无效");
+  const seed = parseInt(seedStr ?? "0", 10) || 0;
+  const algorithm = isGenAlgorithm(algoStr)
+    ? algoStr
+    : GenAlgorithm.Backtracker;
+  const grid: Grid = [];
+  for (let i = 1; i < lines.length; i++) grid.push(lines[i]!.split(""));
+  return { width, height, grid, seed, algorithm };
 }
 
-// ============== 命令处理 ==============
-function parseArgs(args: string[]): {
-  positional: string[];
-  flags: Record<string, string>;
-} {
+// ============================================================
+// 12. 统计
+// ============================================================
+
+function loadStats(): MazeStats {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const d = JSON.parse(
+        fs.readFileSync(DATA_FILE, "utf-8"),
+      ) as Partial<MazeStats>;
+      return {
+        totalGenerated: d.totalGenerated ?? 0,
+        totalSolved: d.totalSolved ?? 0,
+        bestSolveTime: d.bestSolveTime ?? {},
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { totalGenerated: 0, totalSolved: 0, bestSolveTime: {} };
+}
+
+function saveStats(stats: MazeStats): void {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(stats, null, 2), "utf-8");
+  } catch {
+    /* ignore */
+  }
+}
+
+// ============================================================
+// 13. 命令解析 (函数重载)
+// ============================================================
+
+const SYM_PARSED = Symbol("parsed");
+
+interface ParsedArgs {
+  [SYM_PARSED]: boolean;
+  readonly positional: readonly string[];
+  readonly flags: Readonly<Record<string, string>>;
+}
+
+function parseArgs(args: readonly string[]): ParsedArgs {
   const positional: string[] = [];
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith("-")) {
-      const key = args[i].replace(/^-+/, "");
-      if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-        flags[key] = args[i + 1];
-        i++;
+    if (args[i]!.startsWith("-")) {
+      const key = args[i]!.replace(/^-+/, "");
+      if (i + 1 < args.length && !args[i + 1]!.startsWith("-")) {
+        flags[key] = args[++i]!;
       } else {
         flags[key] = "true";
       }
     } else {
-      positional.push(args[i]);
+      positional.push(args[i]!);
     }
   }
-  return { positional, flags };
+  return { [SYM_PARSED]: true, positional, flags };
 }
+
+// ============================================================
+// 14. 命令处理
+// ============================================================
 
 function cmdGenerate(args: string[]): void {
   const { positional, flags } = parseArgs(args);
   if (positional.length < 2) {
-    console.log(ANSI.RED + "用法: generate <w> <h> [-s seed] [-o file]" + ANSI.RESET);
+    console.log(
+      colorize(
+        "用法: generate <w> <h> [-s seed] [-a algo] [-o file]",
+        Color.Red,
+      ),
+    );
     return;
   }
-  const w = parseInt(positional[0], 10);
-  const h = parseInt(positional[1], 10);
-  if (Number.isNaN(w) || Number.isNaN(h) || w < 1 || h < 1) {
-    console.log(ANSI.RED + "尺寸必须为正整数" + ANSI.RESET);
-    return;
+  const w = parseInt(positional[0]!, 10);
+  const h = parseInt(positional[1]!, 10);
+  if (
+    Number.isNaN(w) ||
+    Number.isNaN(h) ||
+    w < 1 ||
+    h < 1 ||
+    w > 100 ||
+    h > 100
+  ) {
+    throw new InvalidSizeError("尺寸必须为 1-100 的正整数");
   }
-  if (w > 100 || h > 100) {
-    console.log(ANSI.RED + "尺寸过大, 上限 100x100" + ANSI.RESET);
-    return;
-  }
-  const seed = flags.s ? parseInt(flags.s, 10) : Math.floor(Math.random() * 1000000);
-  const maze = createMaze(w, h, seed);
-  const file = flags.o || `maze_${w}x${h}_${seed}.txt`;
+  const seed = flags.s
+    ? parseInt(flags.s, 10)
+    : Math.floor(Math.random() * 1000000);
+  const algo = isGenAlgorithm(flags.a) ? flags.a : GenAlgorithm.Backtracker;
+  const generator = createGenerator(w, h, seed, algo);
+  const maze = generator.generate();
+  const file = flags.o ?? `maze_${w}x${h}_${algo}_${seed}.txt`;
   saveMaze(maze, file);
   console.log(
-    ANSI.GREEN + `已生成 ${w}x${h} 迷宫 (种子 ${seed}) -> ${file}` + ANSI.RESET
+    colorize(
+      `已生成 ${w}x${h} 迷宫 (${algo}, 种子 ${seed}) -> ${file}`,
+      Color.Green,
+    ),
   );
   console.log("");
-  renderMaze(maze, { showStartEnd: true });
+  console.log(renderMaze(maze));
+  const stats = loadStats();
+  (stats as Mutable<MazeStats>).totalGenerated++;
+  saveStats(stats);
 }
 
 function cmdSolve(args: string[]): void {
   const { positional, flags } = parseArgs(args);
   if (positional.length < 1) {
-    console.log(ANSI.RED + "用法: solve <maze-file> [-m bfs|dfs] [-o file]" + ANSI.RESET);
+    console.log(
+      colorize("用法: solve <file> [-m bfs|dfs|astar] [-o output]", Color.Red),
+    );
     return;
   }
-  const file = positional[0];
-  if (!fs.existsSync(file)) {
-    console.log(ANSI.RED + `文件不存在: ${file}` + ANSI.RESET);
-    return;
-  }
-  const method: "bfs" | "dfs" = flags.m === "dfs" ? "dfs" : "bfs";
+  const file = positional[0]!;
+  if (!fs.existsSync(file)) throw new MazeFileError(`文件不存在: ${file}`);
+  const method = isSolveAlgorithm(flags.m) ? flags.m : SolveAlgorithm.BFS;
   const maze = loadMaze(file);
-  const start = Date.now();
-  const result = solve(maze, method);
-  const elapsed = Date.now() - start;
-  renderMazeWithStats(maze, result, elapsed);
+  const solver = createSolver(method);
+  const result = solver.solve(maze);
+  const analysis = analyzeMaze(maze, result);
+  console.log(
+    colorize(`\n===== 求解 (${method.toUpperCase()}) =====`, Color.Cyan),
+  );
+  console.log(
+    `找到: ${result.found ? colorize("是", Color.Green) : colorize("否", Color.Red)}  路径长度: ${result.path.length}  探索: ${result.explored.length}  耗时: ${result.elapsedMs}ms`,
+  );
+  console.log(
+    `死胡同: ${analysis.deadEnds}  分叉: ${analysis.junctions}  难度: ${analysis.difficulty}`,
+  );
+  console.log("");
+  console.log(renderMaze(maze, result));
   if (flags.o) {
-    // 保存求解后的迷宫 (在路径上标记 .)
-    const grid = maze.grid.map((row) => row.slice());
-    for (const p of result.explored) {
-      if (grid[p.y][p.x] === " ") grid[p.y][p.x] = ".";
-    }
-    for (const p of result.path) {
-      grid[p.y][p.x] = "*";
-    }
-    const lines: string[] = [`${maze.width} ${maze.height}`];
+    const grid = maze.grid.map((r) => [...r]);
+    for (const [x, y] of result.explored)
+      if (grid[y]![x] === " ") grid[y]![x] = ".";
+    for (const [x, y] of result.path) grid[y]![x] = "*";
+    const lines = [
+      `${maze.width} ${maze.height} ${maze.seed} ${maze.algorithm}`,
+    ];
     for (const row of grid) lines.push(row.join(""));
     fs.writeFileSync(flags.o, lines.join("\n") + "\n", "utf-8");
-    console.log(ANSI.GREEN + `已保存求解结果到 ${flags.o}` + ANSI.RESET);
+    console.log(colorize(`已保存 -> ${flags.o}`, Color.Green));
   }
-}
-
-function cmdAnimate(args: string[]): void {
-  const { positional, flags } = parseArgs(args);
-  if (positional.length < 1) {
-    console.log(ANSI.RED + "用法: animate <maze-file> [-m bfs|dfs]" + ANSI.RESET);
-    return;
+  const stats = loadStats();
+  (stats as Mutable<MazeStats>).totalSolved++;
+  const key = `${maze.width}x${maze.height}_${method}`;
+  const best = stats.bestSolveTime[key];
+  if (best === undefined || result.elapsedMs < best) {
+    (stats as Mutable<MazeStats>).bestSolveTime[key] = result.elapsedMs;
   }
-  const file = positional[0];
-  if (!fs.existsSync(file)) {
-    console.log(ANSI.RED + `文件不存在: ${file}` + ANSI.RESET);
-    return;
-  }
-  const method: "bfs" | "dfs" = flags.m === "dfs" ? "dfs" : "bfs";
-  const maze = loadMaze(file);
-  animateSolve(maze, method);
-}
-
-function animateSolve(maze: Maze, method: "bfs" | "dfs"): void {
-  const { start, end } = getStartEnd(maze);
-  const visited: boolean[][] = [];
-  for (let y = 0; y < maze.grid.length; y++) {
-    visited.push(new Array(maze.grid[0].length).fill(false));
-  }
-  const explored: Array<{ x: number; y: number }> = [];
-  const parents: Record<string, { x: number; y: number } | null> = {};
-  const key = (x: number, y: number) => `${x},${y}`;
-  const frontier: Array<{ x: number; y: number }> = [start];
-  visited[start.y][start.x] = true;
-  parents[key(start.x, start.y)] = null;
-  const dirs = [
-    { dx: 0, dy: -1 },
-    { dx: 0, dy: 1 },
-    { dx: -1, dy: 0 },
-    { dx: 1, dy: 0 },
-  ];
-
-  let found = false;
-  let done = false;
-  let finalPath: Array<{ x: number; y: number }> = [];
-
-  const renderStep = () => {
-    process.stdout.write(ANSI.CLEAR + ANSI.HOME);
-    console.log(
-      ANSI.BOLD +
-        ANSI.CYAN +
-        `===== 迷宫求解动画 (${method.toUpperCase()}) =====` +
-        ANSI.RESET
-    );
-    console.log(
-      `已探索: ${explored.length} 点   ${found ? "找到终点!" : done ? "未找到路径" : "搜索中..."}`
-    );
-    // 渲染
-    const pathSet = new Set(finalPath.map((p) => key(p.x, p.y)));
-    const exploredSet = new Set(explored.map((p) => key(p.x, p.y)));
-    for (let y = 0; y < maze.grid.length; y++) {
-      let row = "";
-      for (let x = 0; x < maze.grid[0].length; x++) {
-        const cell = maze.grid[y][x];
-        const k = key(x, y);
-        if (cell === "#") {
-          row += ANSI.GRAY + "█" + ANSI.RESET;
-        } else if (x === start.x && y === start.y) {
-          row += ANSI.GREEN + "S" + ANSI.RESET;
-        } else if (x === end.x && y === end.y) {
-          row += ANSI.RED + "E" + ANSI.RESET;
-        } else if (pathSet.has(k)) {
-          row += ANSI.YELLOW + "●" + ANSI.RESET;
-        } else if (exploredSet.has(k)) {
-          row += ANSI.BLUE + "·" + ANSI.RESET;
-        } else {
-          row += " ";
-        }
-      }
-      process.stdout.write(row + "\n");
-    }
-  };
-
-  process.stdout.write(ANSI.HIDE_CURSOR);
-
-  const step = () => {
-    if (done) {
-      // 最后展示完整路径
-      renderStep();
-      process.stdout.write(ANSI.SHOW_CURSOR);
-      console.log("");
-      console.log(
-        ANSI.GREEN +
-          `动画结束. 路径长度: ${finalPath.length}, 探索点数: ${explored.length}` +
-          ANSI.RESET
-      );
-      return;
-    }
-    // 每帧执行若干步 (大迷宫加速)
-    const stepsPerFrame = Math.max(1, Math.floor(explored.length / 50) + 1);
-    for (let s = 0; s < stepsPerFrame && !done; s++) {
-      if (frontier.length === 0) {
-        done = true;
-        break;
-      }
-      let cur: { x: number; y: number };
-      if (method === "bfs") {
-        cur = frontier.shift() as { x: number; y: number };
-      } else {
-        cur = frontier.pop() as { x: number; y: number };
-      }
-      explored.push(cur);
-      if (cur.x === end.x && cur.y === end.y) {
-        found = true;
-        // 回溯路径
-        let p: { x: number; y: number } | null = end;
-        while (p) {
-          finalPath.unshift(p);
-          p = parents[key(p.x, p.y)];
-        }
-        done = true;
-        break;
-      }
-      for (const d of dirs) {
-        const nx = cur.x + d.dx;
-        const ny = cur.y + d.dy;
-        if (isPath(maze.grid, nx, ny) && !visited[ny][nx]) {
-          visited[ny][nx] = true;
-          parents[key(nx, ny)] = cur;
-          frontier.push({ x: nx, y: ny });
-        }
-      }
-    }
-    renderStep();
-    if (!done) {
-      setTimeout(step, 30);
-    } else {
-      setTimeout(step, 300);
-    }
-  };
-
-  step();
+  saveStats(stats);
 }
 
 function cmdShow(args: string[]): void {
   const { positional } = parseArgs(args);
   if (positional.length < 1) {
-    console.log(ANSI.RED + "用法: show <maze-file>" + ANSI.RESET);
+    console.log(colorize("用法: show <file>", Color.Red));
     return;
   }
-  const file = positional[0];
-  if (!fs.existsSync(file)) {
-    console.log(ANSI.RED + `文件不存在: ${file}` + ANSI.RESET);
-    return;
-  }
-  const maze = loadMaze(file);
+  const maze = loadMaze(positional[0]!);
   console.log(
-    ANSI.BOLD +
-      ANSI.CYAN +
-      `===== 迷宫 ${maze.width}x${maze.height} =====` +
-      ANSI.RESET
+    colorize(
+      `\n===== 迷宫 ${maze.width}x${maze.height} (${maze.algorithm}) =====`,
+      Color.Cyan,
+    ),
   );
-  renderMaze(maze, { showStartEnd: true });
+  console.log(renderMaze(maze));
+}
+
+function cmdAnimate(args: string[]): void {
+  const { positional, flags } = parseArgs(args);
+  if (positional.length < 1) {
+    console.log(colorize("用法: animate <file> [-m bfs|dfs|astar]", Color.Red));
+    return;
+  }
+  const method = isSolveAlgorithm(flags.m) ? flags.m : SolveAlgorithm.BFS;
+  const maze = loadMaze(positional[0]!);
+  const result = createSolver(method).solve(maze);
+  console.log(
+    colorize(`\n===== 动画 (${method.toUpperCase()}) =====`, Color.Cyan),
+  );
+  console.log(`路径: ${result.path.length}  探索: ${result.explored.length}`);
+  console.log("");
+  console.log(renderMaze(maze, result));
 }
 
 function showHelp(): void {
-  console.log(ANSI.BOLD + ANSI.CYAN + "===== 迷宫生成器与求解器 =====" + ANSI.RESET);
+  console.log(colorize("===== 迷宫生成器与求解器 =====", Color.Cyan));
   console.log("");
   console.log("命令:");
-  console.log("  generate <w> <h> [-s seed] [-o file]   生成迷宫");
-  console.log("  solve <maze-file> [-m bfs|dfs] [-o f]  求解迷宫");
-  console.log("  animate <maze-file> [-m bfs|dfs]       动画展示求解过程");
-  console.log("  show <maze-file>                       显示迷宫");
-  console.log("  help / h                               显示帮助");
-  console.log("  quit / q                               退出");
+  console.log(
+    "  generate <w> <h> [-s seed] [-a backtracker|prim|kruskal] [-o file]",
+  );
+  console.log("  solve <file> [-m bfs|dfs|astar] [-o output]");
+  console.log("  animate <file> [-m bfs|dfs|astar]");
+  console.log("  show <file>");
+  console.log("  help");
+  console.log("  quit");
   console.log("");
-  console.log("图例: █ 墙  S 起点  E 终点  ● 路径  · 已探索");
-  console.log("");
-  console.log("示例:");
-  console.log("  generate 20 15 -s 42");
-  console.log("  solve maze_20x15_42.txt -m bfs");
-  console.log("  animate maze_20x15_42.txt -m dfs");
+  console.log("图例: # 墙  S 起点  E 终点  * 路径  . 已探索");
 }
 
-// ============== 主程序 ==============
+// ============================================================
+// 15. 主程序
+// ============================================================
+
 function main(): void {
   const args = process.argv.slice(2);
-
-  if (args.length === 0) {
-    // 进入交互式 shell
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: "maze> ",
-    });
-    showHelp();
-    rl.prompt();
-    rl.on("line", (line: string) => {
-      const parts = line.trim().split(/\s+/);
-      const cmd = (parts[0] || "").toLowerCase();
-      const rest = parts.slice(1);
-      if (cmd === "quit" || cmd === "q" || cmd === "exit") {
-        process.stdout.write(ANSI.SHOW_CURSOR);
-        rl.close();
-        return;
-      }
-      if (cmd === "help" || cmd === "h") {
-        showHelp();
-      } else if (cmd === "generate") {
-        cmdGenerate(rest);
-      } else if (cmd === "solve") {
-        cmdSolve(rest);
-      } else if (cmd === "animate") {
-        cmdAnimate(rest);
-      } else if (cmd === "show") {
-        cmdShow(rest);
-      } else if (cmd === "") {
-        // no-op
-      } else {
-        console.log(ANSI.RED + `未知命令: ${cmd}` + ANSI.RESET);
-      }
-      rl.prompt();
-    });
-    rl.on("close", () => {
-      process.stdout.write(ANSI.SHOW_CURSOR + ANSI.CLEAR + ANSI.HOME);
-      console.log("再见!");
-      process.exit(0);
-    });
+  if (args.length > 0) {
+    const cmd = args[0]!.toLowerCase();
+    const rest = args.slice(1);
+    try {
+      if (cmd === "generate") cmdGenerate(rest);
+      else if (cmd === "solve") cmdSolve(rest);
+      else if (cmd === "show") cmdShow(rest);
+      else if (cmd === "animate") cmdAnimate(rest);
+      else if (cmd === "help" || cmd === "h") showHelp();
+      else console.log(colorize(`未知命令: ${cmd}`, Color.Red));
+    } catch (e) {
+      if (e instanceof MazeError)
+        console.log(colorize(`错误: ${e.message}`, Color.Red));
+      else throw e;
+    }
     return;
   }
 
-  // 一次性命令
-  const cmd = args[0].toLowerCase();
-  const rest = args.slice(1);
-  if (cmd === "help" || cmd === "h") {
-    showHelp();
-  } else if (cmd === "generate") {
-    cmdGenerate(rest);
-  } else if (cmd === "solve") {
-    cmdSolve(rest);
-  } else if (cmd === "animate") {
-    cmdAnimate(rest);
-  } else if (cmd === "show") {
-    cmdShow(rest);
-  } else {
-    console.log(ANSI.RED + `未知命令: ${cmd}` + ANSI.RESET);
-    showHelp();
-    process.exit(1);
-  }
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: "maze> ",
+  });
+  showHelp();
+  rl.prompt();
+  rl.on("line", (line: string) => {
+    const parts = line.trim().split(/\s+/);
+    const cmd = (parts[0] ?? "").toLowerCase();
+    const rest = parts.slice(1);
+    try {
+      if (cmd === "quit" || cmd === "q" || cmd === "exit") {
+        rl.close();
+        return;
+      } else if (cmd === "help" || cmd === "h") showHelp();
+      else if (cmd === "generate") cmdGenerate(rest);
+      else if (cmd === "solve") cmdSolve(rest);
+      else if (cmd === "show") cmdShow(rest);
+      else if (cmd === "animate") cmdAnimate(rest);
+      else if (cmd === "") {
+        /* no-op */
+      } else console.log(colorize(`未知命令: ${cmd}`, Color.Red));
+    } catch (e) {
+      if (e instanceof MazeError)
+        console.log(colorize(`错误: ${e.message}`, Color.Red));
+      else console.log(colorize(`未知错误: ${String(e)}`, Color.Red));
+    }
+    rl.prompt();
+  });
+  rl.on("close", () => {
+    process.stdout.write(ANSI.SHOW_CURSOR + ANSI.CLEAR + ANSI.HOME);
+    console.log("再见!");
+    process.exit(0);
+  });
 }
 
 main();

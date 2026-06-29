@@ -34,17 +34,17 @@
 
 ## 部署流水线
 
-| 步骤 | 名称 | 说明 |
-|------|------|------|
-| 1 | 环境检查 | 检查 Node.js / npm 版本与依赖 |
-| 2 | 运行测试 | 执行测试命令，可选跳过 |
-| 3 | 项目构建 | 执行构建命令，生成产物 |
-| 4 | 打包压缩 | 将产物打包为 tar.gz |
-| 5 | 远程准备 | SSH 连接、创建目录、备份旧版 |
-| 6 | 上传部署 | 上传并解压到远程服务器 |
-| 7 | 切换版本 | 更新符号链接、重启服务 |
-| 8 | 健康检查 | 验证服务是否正常（含重试） |
-| 9 | 清理 | 清理临时文件与旧版本（可选） |
+| 步骤 | 名称     | 说明                          |
+| ---- | -------- | ----------------------------- |
+| 1    | 环境检查 | 检查 Node.js / npm 版本与依赖 |
+| 2    | 运行测试 | 执行测试命令，可选跳过        |
+| 3    | 项目构建 | 执行构建命令，生成产物        |
+| 4    | 打包压缩 | 将产物打包为 tar.gz           |
+| 5    | 远程准备 | SSH 连接、创建目录、备份旧版  |
+| 6    | 上传部署 | 上传并解压到远程服务器        |
+| 7    | 切换版本 | 更新符号链接、重启服务        |
+| 8    | 健康检查 | 验证服务是否正常（含重试）    |
+| 9    | 清理     | 清理临时文件与旧版本（可选）  |
 
 ## 安装依赖
 
@@ -92,26 +92,26 @@ npm run dev
 
 ## 选项说明
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `-e, --env <name>` | 部署环境 | staging |
-| `-p, --project <name>` | 项目名称 | demo-project |
-| `--host <host>` | SSH 主机地址 | 192.168.1.100 |
-| `--port <port>` | SSH 端口 | 22 |
-| `--user <username>` | SSH 用户名 | deployer |
-| `--remote-path <path>` | 远程部署路径 | /var/www/app |
-| `--build-cmd <cmd>` | 构建命令 | npm run build |
-| `--output-dir <dir>` | 构建输出目录 | ./dist |
-| `--test-cmd <cmd>` | 测试命令 | npm test |
-| `--skip-test` | 跳过测试 | 否 |
-| `--include <patterns>` | 包含文件模式 | dist/\*\*, package.json |
-| `--exclude <patterns>` | 排除文件模式 | \*.log, .env, .git/\*\* |
-| `--backups <n>` | 保留备份数量 | 3 |
-| `--timeout <ms>` | 部署超时时间 | 300000 |
-| `-c, --config <path>` | 配置文件路径 | 无 |
-| `--dry-run` | 干跑模式 | 否 |
-| `--init` | 生成默认配置文件 | 否 |
-| `-v, --verbose` | 详细输出 | 否 |
+| 参数                   | 说明             | 默认值                  |
+| ---------------------- | ---------------- | ----------------------- |
+| `-e, --env <name>`     | 部署环境         | staging                 |
+| `-p, --project <name>` | 项目名称         | demo-project            |
+| `--host <host>`        | SSH 主机地址     | 192.168.1.100           |
+| `--port <port>`        | SSH 端口         | 22                      |
+| `--user <username>`    | SSH 用户名       | deployer                |
+| `--remote-path <path>` | 远程部署路径     | /var/www/app            |
+| `--build-cmd <cmd>`    | 构建命令         | npm run build           |
+| `--output-dir <dir>`   | 构建输出目录     | ./dist                  |
+| `--test-cmd <cmd>`     | 测试命令         | npm test                |
+| `--skip-test`          | 跳过测试         | 否                      |
+| `--include <patterns>` | 包含文件模式     | dist/\*\*, package.json |
+| `--exclude <patterns>` | 排除文件模式     | \*.log, .env, .git/\*\* |
+| `--backups <n>`        | 保留备份数量     | 3                       |
+| `--timeout <ms>`       | 部署超时时间     | 300000                  |
+| `-c, --config <path>`  | 配置文件路径     | 无                      |
+| `--dry-run`            | 干跑模式         | 否                      |
+| `--init`               | 生成默认配置文件 | 否                      |
+| `-v, --verbose`        | 详细输出         | 否                      |
 
 ## 配置文件示例
 

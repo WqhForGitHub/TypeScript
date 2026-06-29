@@ -8,7 +8,12 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "worker-threads", "multithreading", "concurrency"],
+  "keywords": [
+    "typescript",
+    "worker-threads",
+    "multithreading",
+    "concurrency"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

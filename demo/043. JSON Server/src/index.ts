@@ -1,119 +1,530 @@
 #!/usr/bin/env node
 /**
- * 43. JSON Server
- * ----------------------------------------------------
+ * 43. JSON Server (Enhanced)
  * 加载 JSON 文件作为内存数据库，对外提供 RESTful CRUD API。
+ * 增强版使用了多种高级 TypeScript 特性。
  *
- *   GET    /resource                列表 (支持 ?limit&offset&filter)
+ *   GET    /resource                列表 (?limit&offset&filter)
  *   GET    /resource/:id            单条
  *   POST   /resource                新建 (自增 ID)
  *   PUT    /resource/:id            全量更新
  *   PATCH  /resource/:id            部分更新
  *   DELETE /resource/:id            删除
  *
- * 选项:
- *   --port <n>     端口 (默认 4000)
- *   --file <path>  JSON 数据库文件 (默认 ./db.json)
- *   --watch        监听源文件变更并自动重载
- *
+ * 选项: --port <n> | --file <path> | --watch
  * 仅使用 Node.js 内置模块。
  */
 
-import * as http from 'http';
-import * as fs from 'fs';
-import * as path from 'path';
-import { URL } from 'url';
+import * as http from "http";
+import * as fs from "fs";
+import * as path from "path";
+import { URL } from "url";
 
-type Resource = Record<string, unknown>;
-type Database = Record<string, Resource[]>;
+// ============== 枚举 ==============
 
+enum HttpMethod {
+  GET = "GET",
+  POST = "POST",
+  PUT = "PUT",
+  PATCH = "PATCH",
+  DELETE = "DELETE",
+  OPTIONS = "OPTIONS",
+}
+
+enum Operation {
+  Create = "CREATE",
+  ReadOne = "READ_ONE",
+  List = "LIST",
+  Update = "UPDATE",
+  Delete = "DELETE",
+}
+
+enum ContentType {
+  JSON = "application/json; charset=utf-8",
+  TEXT = "text/plain; charset=utf-8",
+}
+
+enum StatusCode {
+  OK = 200,
+  Created = 201,
+  NoContent = 204,
+  BadRequest = 400,
+  NotFound = 404,
+  MethodNotAllowed = 405,
+  Conflict = 409,
+  InternalError = 500,
+}
+
+enum QueryParam {
+  Limit = "limit",
+  Offset = "offset",
+}
+
+// ============== 接口 ==============
+
+interface Resource {
+  id: number;
+  [key: string]: unknown;
+}
+interface Database {
+  [resource: string]: Resource[];
+}
 interface ServerOptions {
-  port: number;
-  file: string;
-  watch: boolean;
+  readonly port: number;
+  readonly file: string;
+  readonly watch: boolean;
 }
-
 interface ParsedArgs {
-  options: ServerOptions;
-  help: boolean;
+  readonly options: ServerOptions;
+  readonly help: boolean;
+}
+interface ListResult {
+  readonly data: readonly Resource[];
+  readonly total: number;
+  readonly limit: number | null;
+  readonly offset: number;
+}
+interface StoreMeta {
+  createdAt: Date;
+  lastModified: Date;
+  operationCount: number;
 }
 
-const DEFAULT_DB: Database = {
+// ============== 符号 ==============
+
+const STORE_META: unique symbol = Symbol("storeMeta");
+
+// ============== 可辨识联合 ==============
+
+interface CreateOp {
+  readonly type: "create";
+  readonly resource: string;
+  readonly data: Record<string, unknown>;
+}
+interface ReadOneOp {
+  readonly type: "readOne";
+  readonly resource: string;
+  readonly id: string;
+}
+interface ListOp {
+  readonly type: "list";
+  readonly resource: string;
+  readonly search: URLSearchParams;
+}
+interface UpdateOp {
+  readonly type: "update";
+  readonly resource: string;
+  readonly id: string;
+  readonly data: Record<string, unknown>;
+  readonly full: boolean;
+}
+interface DeleteOp {
+  readonly type: "delete";
+  readonly resource: string;
+  readonly id: string;
+}
+type CrudOp = CreateOp | ReadOneOp | ListOp | UpdateOp | DeleteOp;
+
+// ============== 映射类型 / 条件类型 / 模板字面量 ==============
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+type CreatableResource = Omit<Resource, "id">;
+type ResourceId = Pick<Resource, "id">;
+type StoreEntry = readonly [string, AbstractStore<Resource>];
+type ExtractData<O> = O extends { data: infer D } ? D : never;
+type IsListOp<O> = O extends ListOp ? true : false;
+type ResourcePath = `/${string}`;
+type ResourceIdPath = `/${string}/${string | number}`;
+type EndpointLabel = `${string}-endpoint`;
+
+// ============== 类型守卫 ==============
+
+const VALID_METHODS = new Set<string>(Object.values(HttpMethod));
+
+function isHttpMethod(value: string): value is HttpMethod {
+  return VALID_METHODS.has(value);
+}
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isResource(value: unknown): value is Resource {
+  return isObject(value) && typeof value.id === "number";
+}
+function isDatabase(value: unknown): value is Database {
+  if (!isObject(value)) return false;
+  return Object.values(value).every((v) => Array.isArray(v));
+}
+function isCrudOp(value: unknown): value is CrudOp {
+  if (!isObject(value)) return false;
+  const t = value.type;
+  return (
+    t === "create" ||
+    t === "readOne" ||
+    t === "list" ||
+    t === "update" ||
+    t === "delete"
+  );
+}
+
+// ============== 自定义错误层级 ==============
+
+abstract class AppError extends Error {
+  abstract readonly code: string;
+  abstract readonly status: StatusCode;
+  constructor(message: string) {
+    super(message);
+    this.name = this.constructor.name;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+  toJSON(): { error: string; message: string; status: StatusCode } {
+    return { error: this.code, message: this.message, status: this.status };
+  }
+}
+class NotFoundError extends AppError {
+  readonly code = "NOT_FOUND";
+  readonly status = StatusCode.NotFound;
+}
+class ValidationError extends AppError {
+  readonly code = "VALIDATION_ERROR";
+  readonly status = StatusCode.BadRequest;
+}
+class MethodNotAllowedError extends AppError {
+  readonly code = "METHOD_NOT_ALLOWED";
+  readonly status = StatusCode.MethodNotAllowed;
+}
+class InternalError extends AppError {
+  readonly code = "INTERNAL_ERROR";
+  readonly status = StatusCode.InternalError;
+}
+
+// ============== as const 与 satisfies ==============
+
+const ALLOWED_METHODS_HEADER = "GET,POST,PUT,PATCH,DELETE,OPTIONS" as const;
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": ALLOWED_METHODS_HEADER,
+  "Access-Control-Allow-Headers": "Content-Type",
+} as const;
+
+const DEFAULT_DB = {
   posts: [
-    { id: 1, title: '欢迎使用 JSON Server', author: 'demo', views: 0 },
-    { id: 2, title: 'TypeScript 入门', author: 'demo', views: 10 },
-    { id: 3, title: 'REST API 设计', author: 'demo', views: 5 },
+    { id: 1, title: "欢迎使用 JSON Server", author: "demo", views: 0 },
+    { id: 2, title: "TypeScript 入门", author: "demo", views: 10 },
+    { id: 3, title: "REST API 设计", author: "demo", views: 5 },
   ],
   users: [
-    { id: 1, name: '张三', age: 28 },
-    { id: 2, name: '李四', age: 34 },
+    { id: 1, name: "张三", age: 28 },
+    { id: 2, name: "李四", age: 34 },
   ],
   comments: [
-    { id: 1, postId: 1, body: '很好用！' },
-    { id: 2, postId: 1, body: '谢谢分享' },
+    { id: 1, postId: 1, body: "很好用！" },
+    { id: 2, postId: 1, body: "谢谢分享" },
   ],
-};
+} satisfies Database;
 
-/** 全局数据库 (内存) */
-let DB: Database = loadDatabase();
-let ID_COUNTERS: Record<string, number> = computeIdCounters(DB);
-let saveTimer: NodeJS.Timeout | null = null;
+// ============== Logger ==============
 
-/** 解析命令行参数 */
-function parseArgs(argv: string[]): ParsedArgs {
+interface ILogger {
+  info(msg: string): void;
+  warn(msg: string): void;
+  error(msg: string): void;
+  req(method: string, url: string, status: number): void;
+}
+const Logger = {
+  info(msg: string): void {
+    console.log(`\x1b[36m[INFO]\x1b[0m ${msg}`);
+  },
+  warn(msg: string): void {
+    console.log(`\x1b[33m[WARN]\x1b[0m ${msg}`);
+  },
+  error(msg: string): void {
+    console.log(`\x1b[31m[ERROR]\x1b[0m ${msg}`);
+  },
+  req(method: string, url: string, status: number): void {
+    const c = status < 300 ? 32 : status < 400 ? 36 : status < 500 ? 33 : 31;
+    console.log(
+      `${new Date().toISOString()} \x1b[35m${method.padEnd(6)}\x1b[0m ${url} \x1b[${c}m${status}\x1b[0m`,
+    );
+  },
+} satisfies ILogger;
+
+// ============== 抽象存储类（泛型 + 约束 + 生成器 + getter/setter） ==============
+
+abstract class AbstractStore<T extends Resource> {
+  protected items: T[];
+  protected [STORE_META]: StoreMeta;
+
+  constructor(items: T[] = []) {
+    this.items = items;
+    this[STORE_META] = {
+      createdAt: new Date(),
+      lastModified: new Date(),
+      operationCount: 0,
+    };
+  }
+
+  abstract persist(): void;
+  abstract reload(): void;
+
+  get count(): number {
+    return this.items.length;
+  }
+  get meta(): Readonly<StoreMeta> {
+    return this[STORE_META];
+  }
+  set data(items: T[]) {
+    this.items = items;
+    this.touch();
+  }
+
+  protected touch(): void {
+    const m = this[STORE_META];
+    m.lastModified = new Date();
+    m.operationCount++;
+  }
+
+  getAll(): readonly T[] {
+    return this.items;
+  }
+  getById(id: string): T | undefined {
+    return this.items.find((i) => String(i.id) === id);
+  }
+
+  create(data: CreatableResource): T {
+    const maxId = this.items.reduce((max, i) => Math.max(max, i.id), 0);
+    const newId: ResourceId = { id: maxId + 1 };
+    const newItem = { ...data, ...newId } as T;
+    this.items.push(newItem);
+    this.touch();
+    this.persist();
+    return newItem;
+  }
+
+  update(id: string, data: Partial<T>, full: boolean): T | undefined {
+    const idx = this.items.findIndex((i) => String(i.id) === id);
+    if (idx === -1) return undefined;
+    const existing = this.items[idx];
+    const updated = full
+      ? ({ ...data, id: existing.id } as T)
+      : ({ ...existing, ...data, id: existing.id } as T);
+    this.items[idx] = updated;
+    this.touch();
+    this.persist();
+    return updated;
+  }
+
+  remove(id: string): T | undefined {
+    const idx = this.items.findIndex((i) => String(i.id) === id);
+    if (idx === -1) return undefined;
+    const [removed] = this.items.splice(idx, 1);
+    this.touch();
+    this.persist();
+    return removed;
+  }
+
+  *iterate(): Generator<T, void, undefined> {
+    for (const item of this.items) yield item;
+  }
+  [Symbol.iterator](): Iterator<T> {
+    return this.iterate();
+  }
+}
+
+// ============== JSON 文件存储（具体子类） ==============
+
+class JsonStore extends AbstractStore<Resource> {
+  constructor(
+    items: Resource[],
+    private readonly filePath: string,
+    private readonly onSave: () => void,
+  ) {
+    super(items);
+  }
+  persist(): void {
+    this.onSave();
+  }
+  reload(): void {
+    /* 由 DatabaseManager 统一处理 */
+  }
+}
+
+// ============== 内存存储（具体子类） ==============
+
+class MemoryStore extends AbstractStore<Resource> {
+  persist(): void {
+    /* 无操作 */
+  }
+  reload(): void {
+    /* 无操作 */
+  }
+}
+
+// ============== 数据库管理器 ==============
+
+class DatabaseManager {
+  private stores = new Map<string, JsonStore>();
+  private saveTimer: NodeJS.Timeout | null = null;
+  private _file: string;
+
+  constructor(file: string) {
+    this._file = file;
+  }
+  get file(): string {
+    return this._file;
+  }
+  set file(value: string) {
+    this._file = path.resolve(value);
+  }
+  get resourceNames(): string[] {
+    return Array.from(this.stores.keys());
+  }
+  hasResource(name: string): boolean {
+    return this.stores.has(name);
+  }
+  getStore(name: string): JsonStore | undefined {
+    return this.stores.get(name);
+  }
+
+  *storesIter(): Generator<StoreEntry> {
+    for (const entry of this.stores) yield entry as StoreEntry;
+  }
+
+  load(): void {
+    try {
+      if (!fs.existsSync(this._file)) {
+        const cloned = JSON.parse(JSON.stringify(DEFAULT_DB)) as Database;
+        fs.writeFileSync(this._file, JSON.stringify(cloned, null, 2), "utf8");
+        Logger.info(`未发现数据库文件，已创建默认数据库: ${this._file}`);
+        this.buildStores(cloned);
+        return;
+      }
+      const raw = fs.readFileSync(this._file, "utf8");
+      const data = JSON.parse(raw);
+      if (!isDatabase(data))
+        throw new ValidationError("数据库根节点必须是对象且值为数组");
+      Logger.info(`数据库已加载: ${this._file}`);
+      this.buildStores(data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Logger.error(`加载数据库失败: ${msg}，使用默认数据`);
+      this.buildStores(JSON.parse(JSON.stringify(DEFAULT_DB)) as Database);
+    }
+  }
+
+  private buildStores(db: Database): void {
+    this.stores.clear();
+    for (const [name, items] of Object.entries(db)) {
+      this.stores.set(
+        name,
+        new JsonStore(items, this._file, () => this.scheduleSave()),
+      );
+    }
+  }
+
+  save(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    try {
+      const db: Database = {};
+      for (const [name, store] of this.stores) db[name] = [...store.getAll()];
+      fs.writeFileSync(this._file, JSON.stringify(db, null, 2), "utf8");
+      Logger.info(`数据库已保存到 ${this._file}`);
+    } catch (err) {
+      Logger.error(
+        `保存数据库失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  scheduleSave(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.save(), 300);
+  }
+
+  reloadFromFile(): void {
+    try {
+      const raw = fs.readFileSync(this._file, "utf8");
+      const data = JSON.parse(raw);
+      if (isDatabase(data)) {
+        this.buildStores(data);
+        Logger.info("数据库重新加载完成");
+      }
+    } catch (err) {
+      Logger.error(
+        `重载失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  overview(): Record<string, number> {
+    const result: Record<string, number> = {};
+    for (const [name, store] of this.stores) result[name] = store.count;
+    return result;
+  }
+}
+
+let dbManager: DatabaseManager;
+
+// ============== 命令行参数解析（函数重载） ==============
+
+function parseArgs(argv: string[]): ParsedArgs;
+function parseArgs(
+  argv: string[],
+  defaults: Partial<ServerOptions>,
+): ParsedArgs;
+function parseArgs(
+  argv: string[],
+  defaults?: Partial<ServerOptions>,
+): ParsedArgs {
   const args = argv.slice(2);
-  const result: ParsedArgs = {
-    options: {
-      port: 4000,
-      file: path.resolve(process.cwd(), 'db.json'),
-      watch: false,
-    },
-    help: false,
-  };
-
+  let port = defaults?.port ?? 4000;
+  let file = defaults?.file ?? path.resolve(process.cwd(), "db.json");
+  let watch = defaults?.watch ?? false;
+  let help = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     const value = args[i + 1];
     switch (flag) {
-      case '--port':
+      case "--port":
         if (value) {
           const p = parseInt(value, 10);
           if (!Number.isNaN(p) && p > 0 && p < 65536) {
-            result.options.port = p;
+            port = p;
             i++;
           }
         }
         break;
-      case '--file':
+      case "--file":
         if (value) {
-          result.options.file = path.resolve(value);
+          file = path.resolve(value);
           i++;
         }
         break;
-      case '--watch':
-        result.options.watch = true;
+      case "--watch":
+        watch = true;
         break;
-      case '--help':
-      case '-h':
-        result.help = true;
+      case "--help":
+      case "-h":
+        help = true;
         break;
       default:
         break;
     }
   }
-  return result;
+  return { options: { port, file, watch }, help };
 }
 
 function printHelp(): void {
   console.log(`
 JSON Server - 模拟 REST API
 
-用法:
-  json-server [--port <n>] [--file <path>] [--watch]
+用法: json-server [--port <n>] [--file <path>] [--watch]
 
 选项:
   --port <n>      监听端口 (默认 4000)
-  --file <path>   JSON 数据库文件 (默认 ./db.json，若不存在会自动创建)
+  --file <path>   JSON 数据库文件 (默认 ./db.json)
   --watch         监听源文件变更，自动重载数据库
   -h, --help      显示帮助
 
@@ -128,376 +539,306 @@ API:
 `);
 }
 
-/** 加载数据库文件 */
-function loadDatabase(): Database {
-  const opts = parseArgs(process.argv).options;
-  const file = opts.file;
-  try {
-    if (!fs.existsSync(file)) {
-      // 首次启动写入默认数据
-      fs.writeFileSync(file, JSON.stringify(DEFAULT_DB, null, 2), 'utf8');
-      Logger.info(`未发现数据库文件，已创建默认数据库: ${file}`);
-      return JSON.parse(JSON.stringify(DEFAULT_DB));
-    }
-    const raw = fs.readFileSync(file, 'utf8');
-    const data = JSON.parse(raw);
-    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-      throw new Error('数据库根节点必须是对象');
-    }
-    Logger.info(`数据库已加载: ${file}`);
-    return data as Database;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    Logger.error(`加载数据库失败: ${msg}，使用默认数据`);
-    return JSON.parse(JSON.stringify(DEFAULT_DB));
-  }
+// ============== 路径解析（只读元组） ==============
+
+function parsePath(pathname: string): readonly [string, string | null] {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length === 0) return ["", null] as const;
+  if (parts.length === 1) return [decodeURIComponent(parts[0]), null] as const;
+  return [decodeURIComponent(parts[0]), decodeURIComponent(parts[1])] as const;
 }
 
-/** 计算每个资源集合的 ID 计数器 */
-function computeIdCounters(db: Database): Record<string, number> {
-  const counters: Record<string, number> = {};
-  for (const key of Object.keys(db)) {
-    const arr = db[key];
-    if (Array.isArray(arr)) {
-      let max = 0;
-      for (const item of arr) {
-        const id = (item as Resource).id;
-        if (typeof id === 'number' && id > max) max = id;
-      }
-      counters[key] = max;
-    }
-  }
-  return counters;
-}
+// ============== JSON 响应（函数重载） ==============
 
-/** 防抖持久化到磁盘 */
-function scheduleSave(): void {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveNow();
-  }, 300);
-}
-
-function saveNow(): void {
-  const opts = parseArgs(process.argv).options;
-  try {
-    fs.writeFileSync(opts.file, JSON.stringify(DB, null, 2), 'utf8');
-    Logger.info(`数据库已保存到 ${opts.file}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    Logger.error(`保存数据库失败: ${msg}`);
-  }
-}
-
-const Logger = {
-  info(msg: string): void {
-    console.log(`\x1b[36m[INFO]\x1b[0m ${msg}`);
-  },
-  warn(msg: string): void {
-    console.log(`\x1b[33m[WARN]\x1b[0m ${msg}`);
-  },
-  error(msg: string): void {
-    console.log(`\x1b[31m[ERROR]\x1b[0m ${msg}`);
-  },
-  req(method: string, url: string, status: number): void {
-    const color = status < 300 ? 32 : status < 400 ? 36 : status < 500 ? 33 : 31;
-    const time = new Date().toISOString();
-    console.log(`${time} \x1b[35m${method.padEnd(6)}\x1b[0m ${url} \x1b[${color}m${status}\x1b[0m`);
-  },
-};
-
-/** 发送 JSON 响应 */
-function sendJson(res: http.ServerResponse, data: unknown, status = 200): void {
-  const body = JSON.stringify(data, null, 2);
-  const buf = Buffer.from(body, 'utf8');
+function sendJson(res: http.ServerResponse, data: unknown): void;
+function sendJson(
+  res: http.ServerResponse,
+  data: unknown,
+  status: StatusCode,
+): void;
+function sendJson(
+  res: http.ServerResponse,
+  data: unknown,
+  status: StatusCode = StatusCode.OK,
+): void {
+  const buf = Buffer.from(JSON.stringify(data, null, 2), "utf8");
   res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': buf.length,
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    "Content-Type": ContentType.JSON,
+    "Content-Length": buf.length,
+    ...CORS_HEADERS,
   });
   res.end(buf);
 }
 
-/** 读取请求体并解析为 JSON */
+// ============== 读取请求体 ==============
+
 function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
     const limit = 10 * 1024 * 1024;
-    req.on('data', (c: Buffer) => {
+    req.on("data", (c: Buffer) => {
       total += c.length;
       if (total > limit) {
-        reject(new Error('请求体过大'));
+        reject(new ValidationError("请求体过大"));
         req.destroy();
         return;
       }
       chunks.push(c);
     });
-    req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8');
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
       if (!raw) {
         resolve({});
         return;
       }
       try {
         resolve(JSON.parse(raw));
-      } catch (e) {
-        reject(new Error('请求体不是合法 JSON'));
+      } catch {
+        reject(new ValidationError("请求体不是合法 JSON"));
       }
     });
-    req.on('error', reject);
+    req.on("error", reject);
   });
 }
 
-/** 路径解析：返回 [资源名, id?] */
-function parsePath(pathname: string): [string, string | null] {
-  const parts = pathname.split('/').filter(Boolean);
-  if (parts.length === 0) return ['', null];
-  if (parts.length === 1) return [decodeURIComponent(parts[0]), null];
-  return [decodeURIComponent(parts[0]), decodeURIComponent(parts[1])];
-}
+// ============== 列表过滤与分页 ==============
 
-/** 列表过滤与分页 */
 function listResource(
-  collection: Resource[],
-  search: URLSearchParams
-): { data: Resource[]; total: number; limit: number | null; offset: number } {
-  let result = collection.slice();
-
-  // 过滤 (除 limit/offset 外的字段都视为等值过滤)
+  collection: readonly Resource[],
+  search: URLSearchParams,
+): ListResult {
+  let result: Resource[] = collection.slice();
   const filterKeys = Array.from(search.keys()).filter(
-    (k) => k !== 'limit' && k !== 'offset'
+    (k) => k !== QueryParam.Limit && k !== QueryParam.Offset,
   );
   for (const key of filterKeys) {
     const expected = search.get(key);
     if (expected === null) continue;
     result = result.filter((item) => {
       const val = item[key];
-      if (val === undefined) return false;
-      return String(val) === expected;
+      return val !== undefined && String(val) === expected;
     });
   }
-
   const total = result.length;
   let limit: number | null = null;
   let offset = 0;
-
-  if (search.has('limit')) {
-    const l = parseInt(search.get('limit') ?? '0', 10);
+  if (search.has(QueryParam.Limit)) {
+    const l = parseInt(search.get(QueryParam.Limit) ?? "0", 10);
     if (!Number.isNaN(l) && l >= 0) limit = l;
   }
-  if (search.has('offset')) {
-    const o = parseInt(search.get('offset') ?? '0', 10);
+  if (search.has(QueryParam.Offset)) {
+    const o = parseInt(search.get(QueryParam.Offset) ?? "0", 10);
     if (!Number.isNaN(o) && o >= 0) offset = o;
   }
-
-  if (limit !== null) {
-    result = result.slice(offset, offset + limit);
-  } else if (offset > 0) {
-    result = result.slice(offset);
-  }
-
+  if (limit !== null) result = result.slice(offset, offset + limit);
+  else if (offset > 0) result = result.slice(offset);
   return { data: result, total, limit, offset };
 }
 
-/** 查找单条 */
-function findById(collection: Resource[], id: string): Resource | undefined {
-  return collection.find((item) => String(item.id) === id);
+// ============== 构建操作（返回可辨识联合 CrudOp） ==============
+
+function buildOp(
+  method: string,
+  resource: string,
+  idStr: string | null,
+  search: URLSearchParams,
+  body: Record<string, unknown> | undefined,
+): CrudOp {
+  switch (method) {
+    case HttpMethod.GET:
+      if (idStr === null) return { type: "list", resource, search };
+      return { type: "readOne", resource, id: idStr };
+    case HttpMethod.POST:
+      if (idStr !== null) throw new MethodNotAllowedError("POST 不支持指定 ID");
+      if (!body) throw new ValidationError("缺少请求体");
+      return { type: "create", resource, data: body };
+    case HttpMethod.PUT:
+      if (idStr === null) throw new MethodNotAllowedError("PUT 需要指定 ID");
+      if (!body) throw new ValidationError("缺少请求体");
+      return { type: "update", resource, id: idStr, data: body, full: true };
+    case HttpMethod.PATCH:
+      if (idStr === null) throw new MethodNotAllowedError("PATCH 需要指定 ID");
+      if (!body) throw new ValidationError("缺少请求体");
+      return { type: "update", resource, id: idStr, data: body, full: false };
+    case HttpMethod.DELETE:
+      if (idStr === null) throw new MethodNotAllowedError("DELETE 需要指定 ID");
+      return { type: "delete", resource, id: idStr };
+    default:
+      throw new MethodNotAllowedError(`不支持的方法: ${method}`);
+  }
 }
 
-/** 处理请求 */
+// ============== 操作执行（可辨识联合 + 穷尽检查） ==============
+
+interface OpResult {
+  readonly status: StatusCode;
+  readonly body: unknown;
+}
+
+function executeOp(store: AbstractStore<Resource>, op: CrudOp): OpResult {
+  switch (op.type) {
+    case "create":
+      return { status: StatusCode.Created, body: store.create(op.data) };
+    case "readOne": {
+      const item = store.getById(op.id);
+      if (!item) throw new NotFoundError(`资源 ${op.id} 未找到`);
+      return { status: StatusCode.OK, body: item };
+    }
+    case "list": {
+      const r = listResource(store.getAll(), op.search);
+      return {
+        status: StatusCode.OK,
+        body: {
+          data: r.data,
+          total: r.total,
+          limit: r.limit,
+          offset: r.offset,
+          count: r.data.length,
+        },
+      };
+    }
+    case "update": {
+      const item = store.update(op.id, op.data, op.full);
+      if (!item) throw new NotFoundError(`资源 ${op.id} 未找到`);
+      return { status: StatusCode.OK, body: item };
+    }
+    case "delete": {
+      const item = store.remove(op.id);
+      if (!item) throw new NotFoundError(`资源 ${op.id} 未找到`);
+      return { status: StatusCode.OK, body: { success: true, deleted: item } };
+    }
+    default: {
+      const _exhaustive: never = op;
+      throw new InternalError(`未知操作: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+// ============== 请求处理 ==============
+
 async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  options: ServerOptions
+  options: ServerOptions,
 ): Promise<void> {
-  const method = req.method ?? 'GET';
-  const fullUrl = req.url ?? '/';
+  const method = req.method ?? HttpMethod.GET;
+  const fullUrl = req.url ?? "/";
   const urlObj = new URL(fullUrl, `http://localhost:${options.port}`);
   const pathname = urlObj.pathname;
 
-  // CORS 预检
-  if (method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    });
+  if (method === HttpMethod.OPTIONS) {
+    res.writeHead(StatusCode.NoContent, { ...CORS_HEADERS });
     res.end();
     return;
   }
 
-  // 根路径返回数据库总览
-  if (pathname === '/' && method === 'GET') {
-    const overview: Record<string, number> = {};
-    for (const key of Object.keys(DB)) {
-      const arr = DB[key];
-      overview[key] = Array.isArray(arr) ? arr.length : 0;
-    }
+  if (pathname === "/" && method === HttpMethod.GET) {
     sendJson(res, {
-      message: 'JSON Server 正在运行',
-      resources: Object.keys(DB),
-      counts: overview,
-      endpoints: Object.keys(DB).map((k) => `/${k}`),
+      message: "JSON Server 正在运行",
+      resources: dbManager.resourceNames,
+      counts: dbManager.overview(),
+      endpoints: dbManager.resourceNames.map((k) => `/${k}` as EndpointLabel),
     });
     return;
   }
 
   const [resource, idStr] = parsePath(pathname);
 
-  // 校验资源是否存在
-  if (!resource || !DB[resource] || !Array.isArray(DB[resource])) {
-    sendJson(res, { error: '资源不存在', resource, available: Object.keys(DB) }, 404);
+  if (!resource || !dbManager.hasResource(resource)) {
+    sendJson(
+      res,
+      { error: "资源不存在", resource, available: dbManager.resourceNames },
+      StatusCode.NotFound,
+    );
     return;
   }
 
-  const collection = DB[resource];
+  const store = dbManager.getStore(resource)!;
 
-  // GET 列表
-  if (method === 'GET' && idStr === null) {
-    const result = listResource(collection, urlObj.searchParams);
-    sendJson(res, {
-      data: result.data,
-      total: result.total,
-      limit: result.limit,
-      offset: result.offset,
-      count: result.data.length,
-    });
-    return;
-  }
-
-  // GET 单条
-  if (method === 'GET' && idStr !== null) {
-    const item = findById(collection, idStr);
-    if (!item) {
-      sendJson(res, { error: '未找到', id: idStr }, 404);
+  let body: Record<string, unknown> | undefined;
+  if (
+    method === HttpMethod.POST ||
+    method === HttpMethod.PUT ||
+    method === HttpMethod.PATCH
+  ) {
+    const raw = await readJsonBody(req);
+    if (!isObject(raw)) {
+      sendJson(
+        res,
+        { error: "VALIDATION_ERROR", message: "请求体必须是对象" },
+        StatusCode.BadRequest,
+      );
       return;
     }
-    sendJson(res, item);
-    return;
+    body = raw;
   }
 
-  // POST 新建
-  if (method === 'POST' && idStr === null) {
-    const body = (await readJsonBody(req)) as Resource;
-    if (Array.isArray(body) || typeof body !== 'object' || body === null) {
-      sendJson(res, { error: '请求体必须是对象' }, 400);
-      return;
-    }
-    ID_COUNTERS[resource] = (ID_COUNTERS[resource] ?? 0) + 1;
-    const newItem: Resource = { ...body, id: ID_COUNTERS[resource] };
-    collection.push(newItem);
-    scheduleSave();
-    sendJson(res, newItem, 201);
-    return;
+  try {
+    const op = buildOp(method, resource, idStr, urlObj.searchParams, body);
+    if (!isCrudOp(op)) throw new InternalError("操作构建异常");
+    const result = executeOp(store, op);
+    sendJson(res, result.body, result.status);
+  } catch (err) {
+    if (err instanceof AppError) sendJson(res, err.toJSON(), err.status);
+    else throw err;
   }
-
-  // PUT / PATCH
-  if ((method === 'PUT' || method === 'PATCH') && idStr !== null) {
-    const body = (await readJsonBody(req)) as Resource;
-    const index = collection.findIndex((item) => String(item.id) === idStr);
-    if (index === -1) {
-      sendJson(res, { error: '未找到', id: idStr }, 404);
-      return;
-    }
-    const existing = collection[index];
-    let updated: Resource;
-    if (method === 'PUT') {
-      // 全量更新 (保留 id)
-      updated = { ...body, id: existing.id };
-    } else {
-      // 部分更新 (保留 id)
-      updated = { ...existing, ...body, id: existing.id };
-    }
-    collection[index] = updated;
-    scheduleSave();
-    sendJson(res, updated);
-    return;
-  }
-
-  // DELETE
-  if (method === 'DELETE' && idStr !== null) {
-    const index = collection.findIndex((item) => String(item.id) === idStr);
-    if (index === -1) {
-      sendJson(res, { error: '未找到', id: idStr }, 404);
-      return;
-    }
-    const [removed] = collection.splice(index, 1);
-    scheduleSave();
-    sendJson(res, { success: true, deleted: removed });
-    return;
-  }
-
-  sendJson(res, { error: '方法或路径不匹配', method, path: pathname }, 404);
 }
 
-/** 启动服务器 */
+// ============== 启动服务器 ==============
+
 function startServer(options: ServerOptions): http.Server {
   const server = http.createServer((req, res) => {
-    const method = req.method ?? 'GET';
-    const url = req.url ?? '/';
-    Logger.req(method, url, res.statusCode);
-
+    const method = req.method ?? HttpMethod.GET;
+    const url = req.url ?? "/";
     handleRequest(req, res, options).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       Logger.error(`处理失败: ${msg}`);
-      if (!res.headersSent) {
-        sendJson(res, { error: '内部错误', message: msg }, 500);
-      }
+      if (!res.headersSent)
+        sendJson(
+          res,
+          { error: "INTERNAL_ERROR", message: msg },
+          StatusCode.InternalError,
+        );
     });
-
-    res.on('finish', () => {
-      Logger.req(method, url, res.statusCode);
-    });
+    res.on("finish", () => Logger.req(method, url, res.statusCode));
   });
 
-  server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE")
       Logger.error(`端口 ${options.port} 已被占用`);
-    } else {
-      Logger.error(err.message);
-    }
+    else Logger.error(err.message);
     process.exit(1);
   });
 
   server.listen(options.port, () => {
     Logger.info(`JSON Server 运行于 http://localhost:${options.port}`);
     Logger.info(`数据库文件: ${options.file}`);
-    Logger.info(`可用资源: ${Object.keys(DB).join(', ')}`);
-    if (options.watch) {
-      Logger.info('已开启 --watch，源文件变更将自动重载');
-    }
+    Logger.info(`可用资源: ${dbManager.resourceNames.join(", ")}`);
+    if (options.watch) Logger.info("已开启 --watch，源文件变更将自动重载");
   });
 
   return server;
 }
 
-/** 监听数据库文件变化（外部编辑） */
+// ============== 监听数据库文件变化 ==============
+
 function watchDatabaseFile(options: ServerOptions): void {
   try {
     fs.watchFile(options.file, { interval: 1000 }, (curr, prev) => {
       if (curr.mtimeMs === prev.mtimeMs) return;
-      Logger.warn('检测到数据库文件外部变更，重新加载...');
-      try {
-        const raw = fs.readFileSync(options.file, 'utf8');
-        const data = JSON.parse(raw);
-        DB = data;
-        ID_COUNTERS = computeIdCounters(DB);
-        Logger.info('数据库重新加载完成');
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        Logger.error(`重载失败: ${msg}`);
-      }
+      Logger.warn("检测到数据库文件外部变更，重新加载...");
+      dbManager.reloadFromFile();
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    Logger.warn(`无法监听文件: ${msg}`);
+    Logger.warn(
+      `无法监听文件: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
-/** 主函数 */
+// ============== 主函数 ==============
+
 function main(): void {
   const parsed = parseArgs(process.argv);
   if (parsed.help) {
@@ -506,28 +847,32 @@ function main(): void {
     return;
   }
 
-  // 由于 loadDatabase 在模块加载时被调用，需在解析后再次确认 file 路径一致
-  // 此处重新加载以使用最终参数
-  DB = loadDatabase();
-  ID_COUNTERS = computeIdCounters(DB);
+  dbManager = new DatabaseManager(parsed.options.file);
+  dbManager.load();
+
+  // 演示 MemoryStore 与生成器迭代
+  const mem = new MemoryStore([
+    { id: 1, label: "demo-a" },
+    { id: 2, label: "demo-b" },
+  ]);
+  Logger.info(
+    `MemoryStore 演示迭代: ${[...mem].map((i) => String(i.label)).join(", ")}`,
+  );
 
   const server = startServer(parsed.options);
-  if (parsed.options.watch) {
-    watchDatabaseFile(parsed.options);
-  }
+  if (parsed.options.watch) watchDatabaseFile(parsed.options);
 
-  // 优雅关闭
-  const shutdown = (sig: string) => {
+  const shutdown = (sig: string): void => {
     Logger.warn(`收到 ${sig}，正在保存并关闭...`);
-    saveNow();
+    dbManager.save();
     server.close(() => {
-      Logger.info('服务器已退出');
+      Logger.info("服务器已退出");
       process.exit(0);
     });
     setTimeout(() => process.exit(1), 5000).unref();
   };
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 main();

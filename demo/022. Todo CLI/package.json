@@ -11,7 +11,12 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "cli", "todo", "task"],
+  "keywords": [
+    "typescript",
+    "cli",
+    "todo",
+    "task"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {

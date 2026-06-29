@@ -80,24 +80,24 @@ node dist/index.js --help
 
 ## 核心实现说明
 
-| 函数 | 作用 |
-| ---- | ---- |
-| `parseDuration(input)` | 解析 `30` / `1m30s` / `1d2h3m4s` 等时长字符串为毫秒 |
-| `parseTargetTime(input)` | 解析目标时间字符串为剩余毫秒 |
-| `splitDuration(ms)` | 将毫秒数拆分为 `TimeParts` (天/时/分/秒) |
-| `formatTimeParts(parts)` | 渲染为 `DD 天 HH:mm:ss` 或 `HH:mm:ss` |
-| `startCountdown(ms, label)` | 启动倒计时，返回 Promise；用 ANSI 控制行内刷新 |
-| `parseArgs(argv)` | 解析并校验命令行参数 |
+| 函数                        | 作用                                                |
+| --------------------------- | --------------------------------------------------- |
+| `parseDuration(input)`      | 解析 `30` / `1m30s` / `1d2h3m4s` 等时长字符串为毫秒 |
+| `parseTargetTime(input)`    | 解析目标时间字符串为剩余毫秒                        |
+| `splitDuration(ms)`         | 将毫秒数拆分为 `TimeParts` (天/时/分/秒)            |
+| `formatTimeParts(parts)`    | 渲染为 `DD 天 HH:mm:ss` 或 `HH:mm:ss`               |
+| `startCountdown(ms, label)` | 启动倒计时，返回 Promise；用 ANSI 控制行内刷新      |
+| `parseArgs(argv)`           | 解析并校验命令行参数                                |
 
 ## 关于 ANSI 行刷新
 
 倒计时使用以下 ANSI 控制序列实现行内刷新：
 
-| 序列 | 作用 |
-| ---- | ---- |
+| 序列        | 作用                 |
+| ----------- | -------------------- |
 | `\r\x1b[2K` | 回到行首并清除当前行 |
-| `\x1b[?25l` | 隐藏光标 |
-| `\x1b[?25h` | 显示光标 |
+| `\x1b[?25l` | 隐藏光标             |
+| `\x1b[?25h` | 显示光标             |
 
 在大多数现代终端（Windows Terminal / macOS Terminal / Linux 终端）中均能正常工作。
 

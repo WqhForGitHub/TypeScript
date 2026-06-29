@@ -1,132 +1,273 @@
 /**
- * 部署流水线模块
- * - 将多个 Task 串联为有序的流水线
- * - 支持 pre/post hooks（钩子）
- * - 支持错误回滚
- * - 支持断点续跑
+ * 部署流水线模块（增强版）
+ * - 枚举/判别联合/抽象流水线/泛型/自定义错误/符号/生成器
  */
 
 import { Logger, formatDuration } from "./logger";
-import { DeployEnvironment, DeployConfig } from "./config";
+import type { DeployEnvironment, DeployConfig } from "./config";
 import { SSHClient } from "./ssh";
-import { Task, TaskResult } from "./tasks";
+import type { Task, TaskResult } from "./tasks";
 
-// ─── 流水线阶段 ───────────────────────────────────────────────
-
-export interface PipelineStage {
-  task: Task;
-  /** 是否可跳过（非关键步骤） */
-  optional?: boolean;
+// ─── 枚举 ─────────────────────────────────────────────────────
+export enum PipelineState {
+  Idle = "idle",
+  Running = "running",
+  Success = "success",
+  Failed = "failed",
+  RolledBack = "rolled_back",
+  DryRun = "dry_run",
 }
 
-// ─── Hook 类型 ────────────────────────────────────────────────
+export enum PipelineErrorCode {
+  NoStages = "NO_STAGES",
+  ExecutionError = "EXECUTION_ERROR",
+  RollbackFailed = "ROLLBACK_FAILED",
+  EnvNotFound = "ENV_NOT_FOUND",
+}
+
+// ─── 工具类型 ─────────────────────────────────────────────────
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+// 条件类型
+type PipelineOutcomeFor<S extends PipelineState> =
+  S extends PipelineState.Success
+    ? {
+        readonly success: true;
+        readonly totalSteps: number;
+        readonly completedSteps: number;
+        readonly duration: number;
+      }
+    : S extends PipelineState.Failed
+      ? {
+          readonly success: false;
+          readonly failedStep: string;
+          readonly duration: number;
+          readonly rolledBack: boolean;
+        }
+      : S extends PipelineState.DryRun
+        ? {
+            readonly success: true;
+            readonly dryRun: true;
+            readonly stages: readonly string[];
+          }
+        : { readonly success: boolean; readonly duration: number };
+
+// 元组
+type PipelineStep = readonly [index: number, task: Task, optional: boolean];
+type StageResult = readonly [taskName: string, result: TaskResult];
+
+// ─── 判别联合: 流水线结果 ─────────────────────────────────────
+interface PipelineSuccess {
+  readonly kind: "success";
+  readonly totalSteps: number;
+  readonly completedSteps: number;
+  readonly results: readonly StageResult[];
+  readonly duration: number;
+  readonly rolledBack: boolean;
+}
+
+interface PipelineFailure {
+  readonly kind: "failure";
+  readonly totalSteps: number;
+  readonly completedSteps: number;
+  readonly failedStep: string;
+  readonly results: readonly StageResult[];
+  readonly duration: number;
+  readonly rolledBack: boolean;
+}
+
+interface PipelineDryRun {
+  readonly kind: "dry_run";
+  readonly stages: readonly string[];
+  readonly duration: number;
+}
+
+export type PipelineOutcome =
+  PipelineSuccess | PipelineFailure | PipelineDryRun;
+
+// 类型守卫
+export function isPipelineSuccess(o: PipelineOutcome): o is PipelineSuccess {
+  return o.kind === "success";
+}
+export function isPipelineFailure(o: PipelineOutcome): o is PipelineFailure {
+  return o.kind === "failure";
+}
+export function isPipelineDryRun(o: PipelineOutcome): o is PipelineDryRun {
+  return o.kind === "dry_run";
+}
+
+// ─── 接口 ─────────────────────────────────────────────────────
+export interface PipelineStage {
+  readonly task: Task;
+  readonly optional?: boolean;
+}
 
 export type HookFn = (env: DeployEnvironment, log: Logger) => Promise<void>;
 
 export interface PipelineHooks {
-  beforeAll?: HookFn;
-  afterAll?: HookFn;
-  beforeEach?: (task: Task, env: DeployEnvironment, log: Logger) => Promise<void>;
-  afterEach?: (task: Task, result: TaskResult, env: DeployEnvironment, log: Logger) => Promise<void>;
-  onFailure?: (task: Task, result: TaskResult, env: DeployEnvironment, log: Logger) => Promise<void>;
+  readonly beforeAll?: HookFn;
+  readonly afterAll?: HookFn;
+  readonly beforeEach?: (
+    task: Task,
+    env: DeployEnvironment,
+    log: Logger,
+  ) => Promise<void>;
+  readonly afterEach?: (
+    task: Task,
+    result: TaskResult,
+    env: DeployEnvironment,
+    log: Logger,
+  ) => Promise<void>;
+  readonly onFailure?: (
+    task: Task,
+    result: TaskResult,
+    env: DeployEnvironment,
+    log: Logger,
+  ) => Promise<void>;
 }
 
-// ─── 流水线执行结果 ───────────────────────────────────────────
-
-export interface PipelineResult {
-  success: boolean;
-  totalSteps: number;
-  completedSteps: number;
-  failedStep?: string;
-  results: Array<{ task: string; result: TaskResult }>;
-  duration: number;
-  rolledBack: boolean;
+// ─── 自定义错误 ───────────────────────────────────────────────
+export abstract class PipelineError extends Error {
+  abstract readonly code: PipelineErrorCode;
+  constructor(message: string) {
+    super(message);
+    this.name = "PipelineError";
+  }
 }
 
-// ─── Pipeline 类 ──────────────────────────────────────────────
+export class NoStagesError extends PipelineError {
+  readonly code = PipelineErrorCode.NoStages;
+  constructor() {
+    super("流水线没有添加任何阶段");
+    this.name = "NoStagesError";
+  }
+}
 
-export class Pipeline {
-  private stages: PipelineStage[] = [];
-  private hooks: PipelineHooks = {};
-  private log: Logger;
-  private config: DeployConfig;
-  private sshClient: SSHClient;
+export class PipelineExecutionError extends PipelineError {
+  readonly code = PipelineErrorCode.ExecutionError;
+  constructor(message: string) {
+    super(message);
+    this.name = "PipelineExecutionError";
+  }
+}
+
+export class PipelineRollbackError extends PipelineError {
+  readonly code = PipelineErrorCode.RollbackFailed;
+  constructor(message: string) {
+    super(message);
+    this.name = "PipelineRollbackError";
+  }
+}
+
+// ─── 符号 ─────────────────────────────────────────────────────
+const PIPELINE_STATE: unique symbol = Symbol("pipelineState");
+const STAGES: unique symbol = Symbol("stages");
+const HOOKS: unique symbol = Symbol("hooks");
+
+// ─── 抽象流水线 ───────────────────────────────────────────────
+abstract class AbstractPipeline {
+  protected [PIPELINE_STATE]: PipelineState = PipelineState.Idle;
+  protected readonly [STAGES]: PipelineStage[] = [];
+  protected [HOOKS]: PipelineHooks = {};
+  protected readonly log: Logger;
+  protected readonly config: DeployConfig;
 
   constructor(config: DeployConfig, log: Logger) {
     this.config = config;
     this.log = log;
+  }
+
+  get state(): PipelineState {
+    return this[PIPELINE_STATE];
+  }
+  get stageCount(): number {
+    return this[STAGES].length;
+  }
+  get isIdle(): boolean {
+    return this[PIPELINE_STATE] === PipelineState.Idle;
+  }
+
+  addStage(task: Task, optional: boolean = false): this {
+    this[STAGES].push({ task, optional });
+    return this;
+  }
+
+  setHooks(hooks: PipelineHooks): this {
+    this[HOOKS] = hooks;
+    return this;
+  }
+
+  *iterStages(): Generator<PipelineStep> {
+    for (let i = 0; i < this[STAGES].length; i++) {
+      const stage = this[STAGES][i];
+      yield [i, stage.task, stage.optional ?? false] as const;
+    }
+  }
+
+  protected getActiveEnv(): DeployEnvironment {
+    const env = this.config.envs[this.config.environment];
+    if (!env)
+      throw new PipelineExecutionError(
+        `未找到环境 "${this.config.environment}" 的配置`,
+      );
+    return env;
+  }
+
+  abstract run(dryRun?: boolean): Promise<PipelineOutcome>;
+  protected abstract rollback(env: DeployEnvironment): Promise<boolean>;
+}
+
+// ─── 部署流水线 ───────────────────────────────────────────────
+export class Pipeline extends AbstractPipeline {
+  private sshClient: SSHClient;
+
+  constructor(config: DeployConfig, log: Logger) {
+    super(config, log);
     const env = this.getActiveEnv();
     this.sshClient = new SSHClient(env.target.ssh, log);
   }
 
-  private getActiveEnv(): DeployEnvironment {
-    const env = this.config.envs[this.config.environment];
-    if (!env) throw new Error(`未找到环境 "${this.config.environment}" 的配置`);
-    return env;
-  }
-
-  /** 添加一个阶段 */
-  addStage(task: Task, optional: boolean = false): Pipeline {
-    this.stages.push({ task, optional });
-    return this;
-  }
-
-  /** 设置 hooks */
-  setHooks(hooks: PipelineHooks): Pipeline {
-    this.hooks = hooks;
-    return this;
-  }
-
-  /** 获取 SSH 客户端 */
   getSSHClient(): SSHClient {
     return this.sshClient;
   }
 
-  /** 执行流水线 */
-  async run(dryRun: boolean = false): Promise<PipelineResult> {
+  async run(dryRun: boolean = false): Promise<PipelineOutcome> {
     const startTime = Date.now();
     const env = this.getActiveEnv();
-    const results: Array<{ task: string; result: TaskResult }> = [];
+    const results: StageResult[] = [];
     let completedSteps = 0;
     let failed = false;
     let failedStepName: string | undefined;
 
-    this.log.setTotalSteps(this.stages.length);
+    this[PIPELINE_STATE] = PipelineState.Running;
+    this.log.setTotalSteps(this.stageCount);
 
-    // beforeAll hook
-    if (this.hooks.beforeAll) {
-      await this.hooks.beforeAll(env, this.log);
-    }
+    if (this[HOOKS].beforeAll) await this[HOOKS].beforeAll(env, this.log);
 
-    // ─── 干跑模式 ──────────────────────────────────────────
+    // 干跑模式
     if (dryRun) {
+      this[PIPELINE_STATE] = PipelineState.DryRun;
       this.log.info("=== 干跑模式 (Dry Run) ===");
       this.log.info("以下步骤将被执行:\n");
-      for (const stage of this.stages) {
+      const stageNames: string[] = [];
+      for (const stage of this[STAGES]) {
         this.log.step(`${stage.task.name} - ${stage.task.description}`);
         this.log.substep(`可选: ${stage.optional ? "是" : "否"}`);
+        stageNames.push(stage.task.name);
       }
       this.log.blank();
       this.log.success("干跑完成，未执行任何实际操作");
       return {
-        success: true,
-        totalSteps: this.stages.length,
-        completedSteps: 0,
-        results: [],
+        kind: "dry_run",
+        stages: stageNames,
         duration: Date.now() - startTime,
-        rolledBack: false,
       };
     }
 
-    // ─── 逐步执行 ──────────────────────────────────────────
-    for (const stage of this.stages) {
-      const { task, optional } = stage;
-
-      // beforeEach hook
-      if (this.hooks.beforeEach) {
-        await this.hooks.beforeEach(task, env, this.log);
-      }
-
+    // 逐步执行
+    for (const [, task, optional] of this.iterStages()) {
+      if (this[HOOKS].beforeEach)
+        await this[HOOKS].beforeEach(task, env, this.log);
       this.log.step(task.name);
       this.log.debug(task.description);
 
@@ -141,67 +282,78 @@ export class Pipeline {
         };
       }
 
-      results.push({ task: task.name, result });
+      results.push([task.name, result] as const);
 
-      // afterEach hook
-      if (this.hooks.afterEach) {
-        await this.hooks.afterEach(task, result, env, this.log);
-      }
+      if (this[HOOKS].afterEach)
+        await this[HOOKS].afterEach(task, result, env, this.log);
 
       if (result.success) {
-        this.log.success(`${task.name} 完成 (${formatDuration(result.duration)})`);
+        this.log.success(
+          `${task.name} 完成 (${formatDuration(result.duration)})`,
+        );
         completedSteps++;
       } else {
         if (optional) {
-          this.log.warn(`${task.name} 失败（可选步骤，已跳过）: ${result.message}`);
+          this.log.warn(
+            `${task.name} 失败（可选步骤，已跳过）: ${result.message}`,
+          );
           completedSteps++;
         } else {
           this.log.error(`${task.name} 失败: ${result.message}`);
           failed = true;
           failedStepName = task.name;
-
-          // onFailure hook
-          if (this.hooks.onFailure) {
-            await this.hooks.onFailure(task, result, env, this.log);
-          }
-
+          if (this[HOOKS].onFailure)
+            await this[HOOKS].onFailure(task, result, env, this.log);
           break;
         }
       }
     }
 
-    // ─── 回滚处理 ──────────────────────────────────────────
+    // 回滚
     let rolledBack = false;
     if (failed) {
       this.log.warn("部署失败，开始回滚...");
       rolledBack = await this.rollback(env);
+      this[PIPELINE_STATE] = rolledBack
+        ? PipelineState.RolledBack
+        : PipelineState.Failed;
+    } else {
+      this[PIPELINE_STATE] = PipelineState.Success;
     }
 
-    // afterAll hook
-    if (this.hooks.afterAll) {
-      await this.hooks.afterAll(env, this.log);
-    }
-
-    // 断开 SSH
+    if (this[HOOKS].afterAll) await this[HOOKS].afterAll(env, this.log);
     await this.sshClient.disconnect();
 
+    if (failed) {
+      return {
+        kind: "failure",
+        totalSteps: this.stageCount,
+        completedSteps,
+        failedStep: failedStepName!,
+        results,
+        duration: Date.now() - startTime,
+        rolledBack,
+      };
+    }
     return {
-      success: !failed,
-      totalSteps: this.stages.length,
+      kind: "success",
+      totalSteps: this.stageCount,
       completedSteps,
-      failedStep: failedStepName,
       results,
       duration: Date.now() - startTime,
       rolledBack,
     };
   }
 
-  /** 回滚 */
-  private async rollback(env: DeployEnvironment): Promise<boolean> {
+  protected async rollback(env: DeployEnvironment): Promise<boolean> {
     this.log.step("回滚");
     try {
-      await this.sshClient.exec(`ln -sfn ${env.target.remotePath}/backups/latest ${env.target.remotePath}/current`);
-      await this.sshClient.exec(`cd ${env.target.remotePath}/current && pm2 restart app || systemctl restart app`);
+      await this.sshClient.exec(
+        `ln -sfn ${env.target.remotePath}/backups/latest ${env.target.remotePath}/current`,
+      );
+      await this.sshClient.exec(
+        `cd ${env.target.remotePath}/current && pm2 restart app || systemctl restart app`,
+      );
       this.log.success("回滚完成，已恢复至上一版本");
       return true;
     } catch (err) {
@@ -211,10 +363,22 @@ export class Pipeline {
   }
 }
 
-// ─── 工厂函数：创建默认部署流水线 ─────────────────────────────
+// ─── 兼容接口 ─────────────────────────────────────────────────
+export interface PipelineResult {
+  readonly success: boolean;
+  readonly totalSteps: number;
+  readonly completedSteps: number;
+  readonly failedStep?: string;
+  readonly results: readonly StageResult[];
+  readonly duration: number;
+  readonly rolledBack: boolean;
+}
 
-export function createDefaultPipeline(config: DeployConfig, log: Logger): Pipeline {
-  // 延迟导入，避免循环依赖
+// ─── 工厂函数 ─────────────────────────────────────────────────
+export function createDefaultPipeline(
+  config: DeployConfig,
+  log: Logger,
+): Pipeline {
   const {
     CheckEnvTask,
     RunTestsTask,
@@ -228,19 +392,17 @@ export function createDefaultPipeline(config: DeployConfig, log: Logger): Pipeli
   } = require("./tasks");
 
   const pipeline = new Pipeline(config, log);
-
   pipeline
-    .addStage(new CheckEnvTask())              // 1. 环境检查
-    .addStage(new RunTestsTask())               // 2. 运行测试（可选）
-    .addStage(new BuildTask())                  // 3. 项目构建
-    .addStage(new CompressTask())               // 4. 打包压缩
-    .addStage(new RemotePrepareTask())          // 5. 远程准备
-    .addStage(new UploadTask())                 // 6. 上传部署
-    .addStage(new SwitchVersionTask())          // 7. 切换版本
-    .addStage(new HealthCheckTask())            // 8. 健康检查
-    .addStage(new CleanupTask(), true);         // 9. 清理（可选）
+    .addStage(new CheckEnvTask())
+    .addStage(new RunTestsTask())
+    .addStage(new BuildTask())
+    .addStage(new CompressTask())
+    .addStage(new RemotePrepareTask())
+    .addStage(new UploadTask())
+    .addStage(new SwitchVersionTask())
+    .addStage(new HealthCheckTask())
+    .addStage(new CleanupTask(), true);
 
-  // 设置 hooks
   const env = config.envs[config.environment];
   pipeline.setHooks({
     beforeAll: async (_env, log) => {

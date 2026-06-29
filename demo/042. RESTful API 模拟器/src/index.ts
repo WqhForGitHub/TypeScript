@@ -4,68 +4,94 @@ import * as http from "http";
 import * as url from "url";
 
 // ============================================================
-// 类型定义
+// 1. String Enums (HTTP methods / status codes / content types)
 // ============================================================
 
-/** HTTP 请求方法 */
-type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+enum HttpMethod {
+  GET = "GET",
+  POST = "POST",
+  PUT = "PUT",
+  PATCH = "PATCH",
+  DELETE = "DELETE",
+  HEAD = "HEAD",
+  OPTIONS = "OPTIONS",
+}
 
-/** 请求头 */
+enum HttpStatus {
+  OK = "200",
+  CREATED = "201",
+  NO_CONTENT = "204",
+  BAD_REQUEST = "400",
+  UNAUTHORIZED = "401",
+  FORBIDDEN = "403",
+  NOT_FOUND = "404",
+  CONFLICT = "409",
+  UNPROCESSABLE = "422",
+  INTERNAL_ERROR = "500",
+}
+
+enum ContentType {
+  JSON = "application/json; charset=utf-8",
+  TEXT = "text/plain; charset=utf-8",
+  HTML = "text/html; charset=utf-8",
+}
+
+// ============================================================
+// 2. Regular Enums (route types / middleware types)
+// ============================================================
+
+enum RouteType {
+  Static = "static",
+  Param = "param",
+  Resource = "resource",
+  Wildcard = "wildcard",
+}
+enum MiddlewareType {
+  Global = "global",
+  Route = "route",
+  Error = "error",
+  Auth = "auth",
+}
+
+// ============================================================
+// 3. Template Literal Types — 路由路径
+// ============================================================
+
+type RoutePath = `/${string}`;
+type ResourcePath = `/api/${string}`;
+type ParamPath<T extends string> = `${RoutePath}/:${T}`;
+
+// ============================================================
+// 4. Mapped / Conditional / Utility Types
+// ============================================================
+
 type Headers = Record<string, string>;
-
-/** 路由参数，如 /users/:id 中的 { id: "1" } */
 type RouteParams = Record<string, string>;
-
-/** 查询参数，如 ?page=1&size=10 中的 { page: "1", size: "10" } */
 type QueryParams = Record<string, string>;
 
-/** 中间件函数：接收上下文，可选择调用 next() 传递给下一个中间件 */
-type Middleware = (ctx: Context, next: () => Promise<void>) => Promise<void>;
+/** 移除只读修饰符的映射类型 */
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+/** 深层 Partial（条件类型 + 映射类型） */
+type DeepPartial<T> = T extends object
+  ? { [K in keyof T]?: DeepPartial<T[K]> }
+  : T;
+/** 条件类型：根据方法推断是否需要请求体 */
+type HasBody<M extends HttpMethod> = M extends
+  HttpMethod.POST | HttpMethod.PUT | HttpMethod.PATCH
+  ? true
+  : false;
+/** 提取路由参数名（递归条件类型） */
+type ExtractParams<P extends string> =
+  P extends `${string}:${infer Param}/${infer Rest}`
+    ? { [K in Param | keyof ExtractParams<`/${Rest}`>]: string }
+    : P extends `${string}:${infer Param}`
+      ? { [K in Param]: string }
+      : {};
 
-/** 路由处理函数 */
-type RouteHandler = (ctx: Context) => Promise<void> | void;
+// ============================================================
+// 5. Discriminated Unions — 响应类型
+// ============================================================
 
-/** 路由条目 */
-interface Route {
-  method: HttpMethod;
-  path: string;
-  handler: RouteHandler;
-  middlewares: Middleware[];
-}
-
-/** 模拟 HTTP 请求对象 */
-interface HttpRequest {
-  method: HttpMethod;
-  path: string;
-  headers: Headers;
-  query: QueryParams;
-  params: RouteParams;
-  body: unknown;
-  rawBody: string;
-}
-
-/** 模拟 HTTP 响应对象 */
-interface HttpResponse {
-  statusCode: number;
-  headers: Headers;
-  body: unknown;
-}
-
-/** 请求上下文：封装请求和响应 */
-interface Context {
-  request: HttpRequest;
-  response: HttpResponse;
-  /** 附加数据，供中间件传递信息 */
-  state: Record<string, unknown>;
-}
-
-/** 路由匹配结果 */
-interface MatchResult {
-  matched: boolean;
-  params: RouteParams;
-}
-
-/** 分页元数据 */
 interface PaginationMeta {
   total: number;
   page: number;
@@ -73,173 +99,652 @@ interface PaginationMeta {
   totalPages: number;
 }
 
-/** 分页响应 */
+interface SuccessResponse<T> {
+  readonly kind: "success";
+  status: HttpStatus;
+  data: T;
+}
+interface ErrorResponse {
+  readonly kind: "error";
+  status: HttpStatus;
+  error: string;
+  message: string;
+  details?: readonly string[];
+}
 interface PaginatedResponse<T> {
+  readonly kind: "paginated";
+  status: HttpStatus;
   data: T[];
   pagination: PaginationMeta;
 }
+type ApiResponse<T> = SuccessResponse<T> | ErrorResponse | PaginatedResponse<T>;
 
 // ============================================================
-// 工具函数
+// 6. 接口（optional / readonly / index signatures） + tuples
 // ============================================================
 
-/** 解析查询字符串 */
+interface HttpRequest {
+  readonly method: HttpMethod;
+  readonly path: string;
+  headers: Headers;
+  query: QueryParams;
+  params: RouteParams;
+  body: unknown;
+  rawBody: string;
+  [key: string]: unknown; // 索引签名
+}
+
+interface HttpResponse {
+  statusCode: number;
+  headers: Headers;
+  body: unknown;
+}
+
+/** State 接口：同时支持 string 索引签名与 unique symbol 键 */
+interface ContextState {
+  [key: string]: unknown;
+  [STATE_USER]?: {
+    readonly name: string;
+    readonly role: string;
+    readonly token: string;
+  } | null;
+}
+
+interface Context {
+  request: HttpRequest;
+  response: HttpResponse;
+  state: ContextState;
+}
+interface MatchResult {
+  matched: boolean;
+  params: RouteParams;
+}
+
+type Middleware = (ctx: Context, next: () => Promise<void>) => Promise<void>;
+type RouteHandler = (ctx: Context) => Promise<void> | void;
+
+interface Route {
+  method: HttpMethod;
+  path: string;
+  handler: RouteHandler;
+  middlewares: Middleware[];
+  type: RouteType;
+}
+
+/** 只读元组：[方法, 路径] */
+type RouteSignature = readonly [HttpMethod, RoutePath];
+
+// ============================================================
+// 7. Symbols 作为唯一属性键
+// ============================================================
+
+const STATE_USER = Symbol("state.user");
+const ROUTE_META = Symbol("route.meta");
+
+// ============================================================
+// 8. 自定义错误类层次结构（带 code 属性）
+// ============================================================
+
+abstract class AppError extends Error {
+  abstract readonly code: string;
+  abstract readonly status: HttpStatus;
+  constructor(message: string) {
+    super(message);
+    this.name = this.constructor.name;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+class NotFoundError extends AppError {
+  readonly code = "NOT_FOUND";
+  readonly status = HttpStatus.NOT_FOUND;
+}
+class UnauthorizedError extends AppError {
+  readonly code = "UNAUTHORIZED";
+  readonly status = HttpStatus.UNAUTHORIZED;
+}
+class BadRequestError extends AppError {
+  readonly code = "BAD_REQUEST";
+  readonly status = HttpStatus.BAD_REQUEST;
+}
+class ValidationError extends AppError {
+  readonly code = "VALIDATION";
+  readonly status = HttpStatus.UNPROCESSABLE;
+  constructor(
+    message: string,
+    public readonly details: readonly string[],
+  ) {
+    super(message);
+  }
+}
+
+// ============================================================
+// 9. 类型守卫
+// ============================================================
+
+function isErrorResponse<T>(r: ApiResponse<T>): r is ErrorResponse {
+  return r.kind === "error";
+}
+function isPaginatedResponse<T>(r: ApiResponse<T>): r is PaginatedResponse<T> {
+  return r.kind === "paginated";
+}
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// ============================================================
+// 10. 工具函数 + as const + satisfies
+// ============================================================
+
+const STATUS_MESSAGES = {
+  200: "OK",
+  201: "Created",
+  204: "No Content",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  422: "Unprocessable Entity",
+  500: "Internal Server Error",
+} as const satisfies Record<number, string>;
+
 function parseQueryString(qs: string): QueryParams {
   const result: QueryParams = {};
   if (!qs) return result;
   const search = qs.startsWith("?") ? qs.slice(1) : qs;
   for (const pair of search.split("&")) {
-    const [key, value] = pair.split("=");
-    if (key) {
-      result[decodeURIComponent(key)] = value ? decodeURIComponent(value) : "";
-    }
+    const [k, v] = pair.split("=");
+    if (k) result[decodeURIComponent(k)] = v ? decodeURIComponent(v) : "";
   }
   return result;
 }
 
-/** 将路由路径模式编译为正则表达式，并提取参数名 */
-function compileRoutePattern(pattern: string): { regex: RegExp; paramNames: string[] } {
+function compileRoutePattern(pattern: string): {
+  regex: RegExp;
+  paramNames: string[];
+} {
   const paramNames: string[] = [];
-  const regexStr = pattern.replace(/:([^/]+)/g, (_, paramName) => {
-    paramNames.push(paramName);
+  const regexStr = pattern.replace(/:([^/]+)/g, (_, p: string) => {
+    paramNames.push(p);
     return "([^/]+)";
   });
-  return {
-    regex: new RegExp(`^${regexStr}$`),
-    paramNames,
-  };
+  return { regex: new RegExp(`^${regexStr}$`), paramNames };
 }
 
-/** 匹配路由路径 */
 function matchRoute(pattern: string, actualPath: string): MatchResult {
   const { regex, paramNames } = compileRoutePattern(pattern);
-  const match = actualPath.match(regex);
-  if (!match) return { matched: false, params: {} };
-
+  const m = actualPath.match(regex);
+  if (!m) return { matched: false, params: {} };
   const params: RouteParams = {};
-  paramNames.forEach((name, i) => {
-    params[name] = match[i + 1];
-  });
+  paramNames.forEach((n, i) => (params[n] = m[i + 1]));
   return { matched: true, params };
 }
 
-/** 生成自增 ID */
+/** 自增 ID 生成器，带 getter/setter + 生成器 + 迭代器 */
 class AutoIncrementId {
-  private current = 0;
+  private _current = 0;
+  get current(): number {
+    return this._current;
+  }
+  set current(v: number) {
+    if (v < 0) throw new BadRequestError("ID 不能为负");
+    this._current = v;
+  }
   next(): number {
-    return ++this.current;
+    return ++this._current;
   }
   reset(): void {
-    this.current = 0;
+    this._current = 0;
+  }
+  *take(n: number): Generator<number> {
+    for (let i = 0; i < n; i++) yield this.next();
+  }
+  [Symbol.iterator](): Iterator<number> {
+    let n = 0;
+    return { next: () => ({ value: ++n, done: false }) };
   }
 }
 
 // ============================================================
-// Router 路由器
+// 11. 抽象类 AbstractMiddleware + 具体子类
+// ============================================================
+
+abstract class AbstractMiddleware {
+  abstract readonly type: MiddlewareType;
+  abstract handle(ctx: Context, next: () => Promise<void>): Promise<void>;
+  toMiddleware(): Middleware {
+    return (ctx, next) => this.handle(ctx, next);
+  }
+}
+
+class LoggerMiddleware extends AbstractMiddleware {
+  readonly type = MiddlewareType.Global;
+  async handle(ctx: Context, next: () => Promise<void>): Promise<void> {
+    const start = Date.now();
+    console.log(
+      `→ [${new Date().toISOString()}] ${ctx.request.method} ${ctx.request.path}`,
+    );
+    await next();
+    const ms = Date.now() - start;
+    ctx.response.headers["X-Response-Time"] = `${ms}ms`;
+    console.log(
+      `← ${ctx.request.method} ${ctx.request.path} ${ctx.response.statusCode} (${ms}ms)`,
+    );
+  }
+}
+
+class CorsMiddleware extends AbstractMiddleware {
+  readonly type = MiddlewareType.Global;
+  async handle(ctx: Context, next: () => Promise<void>): Promise<void> {
+    ctx.response.headers["Access-Control-Allow-Origin"] = "*";
+    ctx.response.headers["Access-Control-Allow-Methods"] =
+      Object.values(HttpMethod).join(", ");
+    ctx.response.headers["Access-Control-Allow-Headers"] =
+      "Content-Type, Authorization";
+    if (ctx.request.method === HttpMethod.OPTIONS) {
+      ctx.response.statusCode = 204;
+      ctx.response.body = "";
+      return;
+    }
+    await next();
+  }
+}
+
+class AuthMiddleware extends AbstractMiddleware {
+  readonly type = MiddlewareType.Auth;
+  constructor(
+    private readonly tokens: readonly string[] = ["secret-token", "demo-key"],
+  ) {
+    super();
+  }
+  async handle(ctx: Context, next: () => Promise<void>): Promise<void> {
+    const header = ctx.request.headers["authorization"];
+    if (!header || !header.startsWith("Bearer "))
+      throw new UnauthorizedError("缺少或无效的 Authorization 头");
+    const token = header.slice(7);
+    if (!this.tokens.includes(token)) throw new UnauthorizedError("Token 无效");
+    ctx.state[STATE_USER] = { name: "Admin", role: "admin", token } as const;
+    await next();
+  }
+}
+
+class TimingMiddleware extends AbstractMiddleware {
+  readonly type = MiddlewareType.Global;
+  async handle(ctx: Context, next: () => Promise<void>): Promise<void> {
+    const start = process.hrtime.bigint();
+    await next();
+    const ms = Number(process.hrtime.bigint() - start) / 1_000_000;
+    ctx.response.headers["X-Timing"] = ms.toFixed(3);
+  }
+}
+
+// ============================================================
+// 12. Router（函数重载 + 生成器 + 迭代器）
 // ============================================================
 
 class Router {
   private routes: Route[] = [];
 
-  /** 注册路由 */
-  private register(method: HttpMethod, path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.routes.push({ method, path, handler, middlewares });
+  register(method: HttpMethod, path: RoutePath, handler: RouteHandler): void;
+  register(
+    method: HttpMethod,
+    path: RoutePath,
+    handler: RouteHandler,
+    ...mws: Middleware[]
+  ): void;
+  register(
+    method: HttpMethod,
+    path: RoutePath,
+    handler: RouteHandler,
+    ...mws: Middleware[]
+  ): void {
+    this.routes.push({
+      method,
+      path,
+      handler,
+      middlewares: mws,
+      type: RouteType.Param,
+    });
   }
 
-  get(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.register("GET", path, handler, ...middlewares);
+  get(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): void {
+    this.register(HttpMethod.GET, path, h, ...mws);
+  }
+  post(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): void {
+    this.register(HttpMethod.POST, path, h, ...mws);
+  }
+  put(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): void {
+    this.register(HttpMethod.PUT, path, h, ...mws);
+  }
+  patch(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): void {
+    this.register(HttpMethod.PATCH, path, h, ...mws);
+  }
+  delete(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): void {
+    this.register(HttpMethod.DELETE, path, h, ...mws);
   }
 
-  post(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.register("POST", path, handler, ...middlewares);
-  }
-
-  put(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.register("PUT", path, handler, ...middlewares);
-  }
-
-  patch(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.register("PATCH", path, handler, ...middlewares);
-  }
-
-  delete(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.register("DELETE", path, handler, ...middlewares);
-  }
-
-  /** 查找匹配的路由 */
-  find(method: HttpMethod, path: string): { route: Route; params: RouteParams } | null {
+  find(
+    method: HttpMethod,
+    path: string,
+  ): { route: Route; params: RouteParams } | null {
     for (const route of this.routes) {
-      const result = matchRoute(route.path, path);
-      if (result.matched && route.method === method) {
-        return { route, params: result.params };
-      }
+      const r = matchRoute(route.path, path);
+      if (r.matched && route.method === method)
+        return { route, params: r.params };
     }
     return null;
   }
 
-  /** 获取所有已注册路由（用于调试） */
+  *signatures(): Generator<RouteSignature> {
+    for (const r of this.routes) yield [r.method, r.path as RoutePath];
+  }
+
   getRoutes(): ReadonlyArray<Readonly<Route>> {
     return this.routes;
+  }
+
+  [Symbol.iterator](): Iterator<Route> {
+    let i = 0;
+    const rs = this.routes;
+    return {
+      next: () =>
+        i < rs.length
+          ? { value: rs[i++], done: false }
+          : { value: undefined, done: true },
+    };
   }
 }
 
 // ============================================================
-// Application 应用
+// 13. ResourceController 接口 + AbstractController 抽象类
+// ============================================================
+
+interface ResourceController<T = unknown> {
+  index(ctx: Context): Promise<void> | void;
+  show(ctx: Context): Promise<void> | void;
+  create(ctx: Context): Promise<void> | void;
+  update(ctx: Context): Promise<void> | void;
+  destroy(ctx: Context): Promise<void> | void;
+}
+
+type ValidationResult = { valid: boolean; errors: string[] };
+type Validator<T> = (data: unknown) => ValidationResult;
+
+abstract class AbstractController<
+  T extends object,
+> implements ResourceController<T> {
+  protected readonly store = new Map<number, T>();
+  protected readonly idGen = new AutoIncrementId();
+
+  constructor(
+    protected readonly resourceName: string,
+    protected readonly validator?: Validator<T>,
+  ) {}
+
+  abstract index(ctx: Context): Promise<void> | void;
+  abstract show(ctx: Context): Promise<void> | void;
+  abstract create(ctx: Context): Promise<void> | void;
+  abstract update(ctx: Context): Promise<void> | void;
+  abstract destroy(ctx: Context): Promise<void> | void;
+
+  protected seedItems(items: readonly Omit<T, "id">[]): void {
+    for (const it of items) {
+      const id = this.idGen.next();
+      this.store.set(id, { id, ...(it as object) } as T);
+    }
+  }
+
+  getStore(): Map<number, T> {
+    return this.store;
+  }
+  getIdGenerator(): AutoIncrementId {
+    return this.idGen;
+  }
+
+  *[Symbol.iterator](): Generator<T> {
+    for (const v of this.store.values()) yield v;
+  }
+}
+
+// ============================================================
+// 14. 通用 CRUD 控制器（继承 AbstractController）
+// ============================================================
+
+class CrudController<T extends object> extends AbstractController<T> {
+  async index(ctx: Context): Promise<void> {
+    const { page = "1", pageSize = "10", ...filters } = ctx.request.query;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const pageSizeNum = Math.max(
+      1,
+      Math.min(100, parseInt(pageSize, 10) || 10),
+    );
+    let items = Array.from(this.store.values());
+    for (const [k, v] of Object.entries(filters)) {
+      items = items.filter(
+        (it) =>
+          String((it as Record<string, unknown>)[k]).toLowerCase() ===
+          v.toLowerCase(),
+      );
+    }
+    const total = items.length;
+    const totalPages = Math.ceil(total / pageSizeNum);
+    const start = (pageNum - 1) * pageSizeNum;
+    const data = items.slice(start, start + pageSizeNum);
+    const pagination: PaginationMeta = {
+      total,
+      page: pageNum,
+      pageSize: pageSizeNum,
+      totalPages,
+    };
+    const resp: PaginatedResponse<T> = {
+      kind: "paginated",
+      status: HttpStatus.OK,
+      data,
+      pagination,
+    };
+    ctx.response.statusCode = 200;
+    ctx.response.body = resp;
+  }
+
+  async show(ctx: Context): Promise<void> {
+    const id = parseInt(ctx.request.params.id, 10);
+    if (isNaN(id)) throw new BadRequestError("ID 必须是数字");
+    const item = this.store.get(id);
+    if (!item) throw new NotFoundError(`${this.resourceName} #${id} 不存在`);
+    const resp: SuccessResponse<T> = {
+      kind: "success",
+      status: HttpStatus.OK,
+      data: item,
+    };
+    ctx.response.statusCode = 200;
+    ctx.response.body = resp;
+  }
+
+  async create(ctx: Context): Promise<void> {
+    if (!isObject(ctx.request.body))
+      throw new BadRequestError("请求体必须是 JSON 对象");
+    if (this.validator) {
+      const r = this.validator(ctx.request.body);
+      if (!r.valid) throw new ValidationError("数据验证失败", r.errors);
+    }
+    const id = this.idGen.next();
+    const item = { id, ...(ctx.request.body as object) } as T;
+    this.store.set(id, item);
+    const resp: SuccessResponse<T> = {
+      kind: "success",
+      status: HttpStatus.CREATED,
+      data: item,
+    };
+    ctx.response.statusCode = 201;
+    ctx.response.body = resp;
+  }
+
+  async update(ctx: Context): Promise<void> {
+    const id = parseInt(ctx.request.params.id, 10);
+    if (isNaN(id)) throw new BadRequestError("ID 必须是数字");
+    if (!this.store.has(id))
+      throw new NotFoundError(`${this.resourceName} #${id} 不存在`);
+    if (!isObject(ctx.request.body))
+      throw new BadRequestError("请求体必须是 JSON 对象");
+    if (this.validator) {
+      const r = this.validator(ctx.request.body);
+      if (!r.valid) throw new ValidationError("数据验证失败", r.errors);
+    }
+    const updated = { id, ...(ctx.request.body as object) } as T;
+    this.store.set(id, updated);
+    const resp: SuccessResponse<T> = {
+      kind: "success",
+      status: HttpStatus.OK,
+      data: updated,
+    };
+    ctx.response.statusCode = 200;
+    ctx.response.body = resp;
+  }
+
+  async destroy(ctx: Context): Promise<void> {
+    const id = parseInt(ctx.request.params.id, 10);
+    if (isNaN(id)) throw new BadRequestError("ID 必须是数字");
+    if (!this.store.has(id))
+      throw new NotFoundError(`${this.resourceName} #${id} 不存在`);
+    this.store.delete(id);
+    ctx.response.statusCode = 200;
+    ctx.response.body = {
+      kind: "success",
+      status: HttpStatus.OK,
+      data: { id, deleted: true },
+    };
+  }
+
+  seed(items: readonly Omit<T, "id">[]): void {
+    this.seedItems(items);
+  }
+}
+
+// ============================================================
+// 15. 领域模型：User / Post + 派生类型
+// ============================================================
+
+interface User {
+  readonly id: number;
+  name: string;
+  email: string;
+  role: "admin" | "editor" | "viewer";
+  createdAt: string;
+}
+
+interface Post {
+  readonly id: number;
+  title: string;
+  content: string;
+  authorId: number;
+  tags: readonly string[];
+  createdAt: string;
+}
+
+type UserCreateDTO = Omit<User, "id" | "createdAt">;
+type UserUpdateDTO = Partial<UserCreateDTO>;
+type UserPublicView = Pick<User, "id" | "name" | "role">;
+type PostSummary = Pick<Post, "id" | "title" | "authorId">;
+
+const ROLES = ["admin", "editor", "viewer"] as const;
+type Role = (typeof ROLES)[number];
+
+function isRole(v: unknown): v is Role {
+  return typeof v === "string" && (ROLES as readonly string[]).includes(v);
+}
+
+function validateUser(data: unknown): ValidationResult {
+  const errors: string[] = [];
+  if (!isObject(data)) return { valid: false, errors: ["请求体必须是对象"] };
+  if (typeof data.name !== "string" || data.name.trim().length < 2)
+    errors.push("name 至少 2 个字符");
+  if (typeof data.email !== "string" || !data.email.includes("@"))
+    errors.push("email 无效");
+  if (data.role !== undefined && !isRole(data.role))
+    errors.push("role 必须是 admin/editor/viewer");
+  return { valid: errors.length === 0, errors };
+}
+
+function validatePost(data: unknown): ValidationResult {
+  const errors: string[] = [];
+  if (!isObject(data)) return { valid: false, errors: ["请求体必须是对象"] };
+  if (typeof data.title !== "string" || !data.title.trim())
+    errors.push("title 不能为空");
+  if (typeof data.content !== "string") errors.push("content 不能为空");
+  if (data.authorId !== undefined && typeof data.authorId !== "number")
+    errors.push("authorId 必须是数字");
+  if (data.tags !== undefined && !Array.isArray(data.tags))
+    errors.push("tags 必须是数组");
+  return { valid: errors.length === 0, errors };
+}
+
+// ============================================================
+// 16. Application 应用
 // ============================================================
 
 class Application {
-  private router = new Router();
-  private globalMiddlewares: Middleware[] = [];
+  private readonly router = new Router();
+  private readonly globalMiddlewares: Middleware[] = [];
   private server: http.Server | null = null;
+  // 用 unique symbol 作为私有字段键
+  private readonly [ROUTE_META]: Map<string, unknown> = new Map();
 
-  /** 添加全局中间件 */
-  use(middleware: Middleware): void {
-    this.globalMiddlewares.push(middleware);
+  use(mw: Middleware | AbstractMiddleware): this {
+    const fn = mw instanceof AbstractMiddleware ? mw.toMiddleware() : mw;
+    this.globalMiddlewares.push(fn);
+    return this;
   }
 
-  /** 路由快捷方法 */
-  get(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.router.get(path, handler, ...middlewares);
+  get(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): this {
+    this.router.get(path, h, ...mws);
+    return this;
+  }
+  post(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): this {
+    this.router.post(path, h, ...mws);
+    return this;
+  }
+  put(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): this {
+    this.router.put(path, h, ...mws);
+    return this;
+  }
+  patch(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): this {
+    this.router.patch(path, h, ...mws);
+    return this;
+  }
+  delete(path: RoutePath, h: RouteHandler, ...mws: Middleware[]): this {
+    this.router.delete(path, h, ...mws);
+    return this;
   }
 
-  post(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.router.post(path, handler, ...middlewares);
-  }
-
-  put(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.router.put(path, handler, ...middlewares);
-  }
-
-  patch(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.router.patch(path, handler, ...middlewares);
-  }
-
-  delete(path: string, handler: RouteHandler, ...middlewares: Middleware[]): void {
-    this.router.delete(path, handler, ...middlewares);
-  }
-
-  /** 注册 RESTful 资源路由（一次性生成 CRUD 五个端点） */
-  resource(basePath: string, controller: ResourceController): void {
-    // GET /basePath — 列表
+  /** 泛型方法 + 约束：注册 RESTful 资源路由 */
+  resource<T extends object>(
+    basePath: ResourcePath,
+    controller: AbstractController<T>,
+  ): this {
     this.router.get(basePath, controller.index.bind(controller));
-    // GET /basePath/:id — 详情
-    this.router.get(`${basePath}/:id`, controller.show.bind(controller));
-    // POST /basePath — 创建
+    this.router.get(
+      `${basePath}/:id` as RoutePath,
+      controller.show.bind(controller),
+    );
     this.router.post(basePath, controller.create.bind(controller));
-    // PUT /basePath/:id — 全量更新
-    this.router.put(`${basePath}/:id`, controller.update.bind(controller));
-    // DELETE /basePath/:id — 删除
-    this.router.delete(`${basePath}/:id`, controller.destroy.bind(controller));
+    this.router.put(
+      `${basePath}/:id` as RoutePath,
+      controller.update.bind(controller),
+    );
+    this.router.delete(
+      `${basePath}/:id` as RoutePath,
+      controller.destroy.bind(controller),
+    );
+    return this;
   }
 
-  /** 处理请求核心逻辑 */
-  private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const parsedUrl = url.parse(req.url || "/", true);
+  private async handleRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<void> {
+    const parsed = url.parse(req.url || "/", true);
     const method = (req.method || "GET").toUpperCase() as HttpMethod;
-    const path = parsedUrl.pathname || "/";
-    const query = parseQueryString(parsedUrl.search || "");
-
-    // 读取请求体
+    const path = parsed.pathname || "/";
+    const query = parseQueryString(parsed.search || "");
     const rawBody = await this.readBody(req);
     let body: unknown = null;
     if (rawBody) {
@@ -250,7 +755,6 @@ class Application {
       }
     }
 
-    // 构建 Context
     const ctx: Context = {
       request: {
         method,
@@ -263,736 +767,247 @@ class Application {
       },
       response: {
         statusCode: 200,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
+        headers: { "Content-Type": ContentType.JSON },
         body: null,
       },
       state: {},
     };
 
-    // 查找路由
     const found = this.router.find(method, path);
-
     if (!found) {
-      // 404
       ctx.response.statusCode = 404;
-      ctx.response.body = {
+      const errResp: ErrorResponse = {
+        kind: "error",
+        status: HttpStatus.NOT_FOUND,
         error: "Not Found",
         message: `路由 ${method} ${path} 不存在`,
-        availableRoutes: this.router.getRoutes().map(
-          (r) => `${r.method.padEnd(7)} ${r.path}`
-        ),
+        details: this.router
+          .getRoutes()
+          .map((r) => `${r.method.padEnd(7)} ${r.path}`),
       };
+      ctx.response.body = errResp;
       this.sendResponse(res, ctx);
       return;
     }
 
-    // 注入路由参数
     ctx.request.params = found.params;
-
-    // 组合中间件链：全局中间件 + 路由级中间件 + 路由处理函数
-    const allMiddlewares = [
+    const chain: Middleware[] = [
       ...this.globalMiddlewares,
       ...found.route.middlewares,
     ];
-
     let handlerCalled = false;
-    const handlerMiddleware: Middleware = async (c, _next) => {
+    const handlerMw: Middleware = async (c) => {
       handlerCalled = true;
       await found.route.handler(c);
     };
+    chain.push(handlerMw);
 
-    const chain = [...allMiddlewares, handlerMiddleware];
-
-    // 执行中间件链
     let index = -1;
     const dispatch = async (i: number): Promise<void> => {
-      if (i <= index) throw new Error("next() 被调用了多次");
+      if (i <= index) throw new Error("next() 被多次调用");
       index = i;
       if (i >= chain.length) return;
-      const mw = chain[i];
-      try {
-        await mw(ctx, () => dispatch(i + 1));
-      } catch (err) {
-        // 错误处理中间件
-        ctx.response.statusCode = 500;
-        ctx.response.body = {
-          error: "Internal Server Error",
-          message: err instanceof Error ? err.message : String(err),
-        };
-      }
+      await chain[i](ctx, () => dispatch(i + 1));
     };
 
-    await dispatch(0);
-
-    if (!handlerCalled) {
-      // 所有中间件都未调用处理函数（可能被中间件拦截）
-      if (!ctx.response.body) {
+    try {
+      await dispatch(0);
+      if (!handlerCalled && !ctx.response.body) {
         ctx.response.statusCode = 403;
-        ctx.response.body = { error: "Forbidden", message: "请求被中间件拦截" };
+        ctx.response.body = {
+          kind: "error",
+          status: HttpStatus.FORBIDDEN,
+          error: "Forbidden",
+          message: "请求被中间件拦截",
+        } satisfies ErrorResponse;
+      }
+    } catch (err) {
+      if (err instanceof AppError) {
+        ctx.response.statusCode = parseInt(err.status, 10);
+        ctx.response.body = {
+          kind: "error",
+          status: err.status,
+          error: err.name,
+          message: err.message,
+          details: err instanceof ValidationError ? err.details : undefined,
+        } satisfies ErrorResponse;
+      } else {
+        ctx.response.statusCode = 500;
+        ctx.response.body = {
+          kind: "error",
+          status: HttpStatus.INTERNAL_ERROR,
+          error: "Internal Server Error",
+          message: err instanceof Error ? err.message : String(err),
+        } satisfies ErrorResponse;
       }
     }
 
     this.sendResponse(res, ctx);
   }
 
-  /** 读取请求体 */
   private readBody(req: http.IncomingMessage): Promise<string> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
       req.on("error", reject);
     });
   }
 
-  /** 发送响应 */
   private sendResponse(res: http.ServerResponse, ctx: Context): void {
-    const bodyStr = typeof ctx.response.body === "string"
-      ? ctx.response.body
-      : JSON.stringify(ctx.response.body, null, 2);
-
+    const bodyStr =
+      typeof ctx.response.body === "string"
+        ? ctx.response.body
+        : JSON.stringify(ctx.response.body, null, 2);
     res.writeHead(ctx.response.statusCode, ctx.response.headers);
     res.end(bodyStr);
   }
 
-  /** 启动服务器 */
-  listen(port: number, callback?: () => void): void {
+  listen(port: number, cb?: () => void): void {
     this.server = http.createServer((req, res) => {
-      this.handleRequest(req, res).catch((err) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal Server Error", message: String(err) }));
+      this.handleRequest(req, res).catch((e) => {
+        res.writeHead(500, { "Content-Type": ContentType.JSON });
+        res.end(JSON.stringify({ error: String(e) }));
       });
     });
-
     this.server.listen(port, () => {
-      console.log(`\n🚀 RESTful API 模拟器已启动`);
-      console.log(`   地址: http://localhost:${port}`);
-      console.log(`   按 Ctrl+C 停止服务器\n`);
+      console.log(`\n[RESTful API 模拟器已启动] http://localhost:${port}\n`);
       this.printRoutes();
-      callback?.();
+      cb?.();
     });
   }
 
-  /** 打印所有路由 */
   private printRoutes(): void {
     const routes = this.router.getRoutes();
-    console.log("已注册的路由：");
+    console.log("已注册路由：");
     console.log("─".repeat(45));
-    console.log(`${"方法".padEnd(10)}${"路径".padEnd(20)}${"处理函数"}`);
-    console.log("─".repeat(45));
-    for (const route of routes) {
-      const handlerName = route.handler.name || "<anonymous>";
-      console.log(`${route.method.padEnd(10)}${route.path.padEnd(20)}${handlerName}`);
-    }
+    for (const r of routes) console.log(`${r.method.padEnd(10)}${r.path}`);
     console.log("─".repeat(45));
     console.log(`共 ${routes.length} 条路由\n`);
   }
 }
 
 // ============================================================
-// ResourceController 资源控制器接口
+// 17. 种子数据与自定义路由
 // ============================================================
 
-interface ResourceController {
-  index(ctx: Context): Promise<void> | void;
-  show(ctx: Context): Promise<void> | void;
-  create(ctx: Context): Promise<void> | void;
-  update(ctx: Context): Promise<void> | void;
-  destroy(ctx: Context): Promise<void> | void;
+function seedUsers(c: CrudController<User>): void {
+  c.seed([
+    {
+      name: "张三",
+      email: "zhangsan@example.com",
+      role: "admin",
+      createdAt: "2024-01-15T08:00:00Z",
+    },
+    {
+      name: "李四",
+      email: "lisi@example.com",
+      role: "editor",
+      createdAt: "2024-02-20T09:30:00Z",
+    },
+    {
+      name: "王五",
+      email: "wangwu@example.com",
+      role: "viewer",
+      createdAt: "2024-03-10T14:15:00Z",
+    },
+  ] as const as readonly Omit<User, "id">[]);
 }
 
-// ============================================================
-// 通用 CRUD 控制器
-// ============================================================
-
-class CrudController<T extends object> implements ResourceController {
-  private store = new Map<number, T>();
-  private idGenerator = new AutoIncrementId();
-
-  constructor(private resourceName: string, private validationSchema?: (data: unknown) => { valid: boolean; errors: string[] }) {}
-
-  /** GET / — 列表（支持分页和过滤） */
-  async index(ctx: Context): Promise<void> {
-    const { page = "1", pageSize = "10", ...filters } = ctx.request.query;
-    const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const pageSizeNum = Math.max(1, Math.min(100, parseInt(pageSize, 10) || 10));
-
-    let items = Array.from(this.store.values());
-
-    // 简单过滤：查询参数中非分页字段作为过滤条件
-    for (const [key, value] of Object.entries(filters)) {
-      items = items.filter((item) => String((item as Record<string, unknown>)[key]).toLowerCase() === value.toLowerCase());
-    }
-
-    const total = items.length;
-    const totalPages = Math.ceil(total / pageSizeNum);
-    const start = (pageNum - 1) * pageSizeNum;
-    const data = items.slice(start, start + pageSizeNum);
-
-    const pagination: PaginationMeta = { total, page: pageNum, pageSize: pageSizeNum, totalPages };
-    const response: PaginatedResponse<T> = { data, pagination };
-
-    ctx.response.statusCode = 200;
-    ctx.response.body = response;
-  }
-
-  /** GET /:id — 详情 */
-  async show(ctx: Context): Promise<void> {
-    const id = parseInt(ctx.request.params.id, 10);
-    if (isNaN(id)) {
-      ctx.response.statusCode = 400;
-      ctx.response.body = { error: "Bad Request", message: "ID 必须是数字" };
-      return;
-    }
-
-    const item = this.store.get(id);
-    if (!item) {
-      ctx.response.statusCode = 404;
-      ctx.response.body = { error: "Not Found", message: `${this.resourceName} #${id} 不存在` };
-      return;
-    }
-
-    ctx.response.statusCode = 200;
-    ctx.response.body = { data: item };
-  }
-
-  /** POST / — 创建 */
-  async create(ctx: Context): Promise<void> {
-    if (!ctx.request.body || typeof ctx.request.body !== "object") {
-      ctx.response.statusCode = 400;
-      ctx.response.body = { error: "Bad Request", message: "请求体必须是 JSON 对象" };
-      return;
-    }
-
-    // 验证
-    if (this.validationSchema) {
-      const result = this.validationSchema(ctx.request.body);
-      if (!result.valid) {
-        ctx.response.statusCode = 422;
-        ctx.response.body = { error: "Unprocessable Entity", message: "数据验证失败", details: result.errors };
-        return;
-      }
-    }
-
-    const id = this.idGenerator.next();
-    const item = { id, ...(ctx.request.body as object) } as unknown as T;
-    this.store.set(id, item);
-
-    ctx.response.statusCode = 201;
-    ctx.response.body = { data: item, message: `${this.resourceName} 创建成功` };
-  }
-
-  /** PUT /:id — 全量更新 */
-  async update(ctx: Context): Promise<void> {
-    const id = parseInt(ctx.request.params.id, 10);
-    if (isNaN(id)) {
-      ctx.response.statusCode = 400;
-      ctx.response.body = { error: "Bad Request", message: "ID 必须是数字" };
-      return;
-    }
-
-    if (!this.store.has(id)) {
-      ctx.response.statusCode = 404;
-      ctx.response.body = { error: "Not Found", message: `${this.resourceName} #${id} 不存在` };
-      return;
-    }
-
-    if (!ctx.request.body || typeof ctx.request.body !== "object") {
-      ctx.response.statusCode = 400;
-      ctx.response.body = { error: "Bad Request", message: "请求体必须是 JSON 对象" };
-      return;
-    }
-
-    // 验证
-    if (this.validationSchema) {
-      const result = this.validationSchema(ctx.request.body);
-      if (!result.valid) {
-        ctx.response.statusCode = 422;
-        ctx.response.body = { error: "Unprocessable Entity", message: "数据验证失败", details: result.errors };
-        return;
-      }
-    }
-
-    const updated = { id, ...(ctx.request.body as object) } as unknown as T;
-    this.store.set(id, updated);
-
-    ctx.response.statusCode = 200;
-    ctx.response.body = { data: updated, message: `${this.resourceName} #${id} 更新成功` };
-  }
-
-  /** DELETE /:id — 删除 */
-  async destroy(ctx: Context): Promise<void> {
-    const id = parseInt(ctx.request.params.id, 10);
-    if (isNaN(id)) {
-      ctx.response.statusCode = 400;
-      ctx.response.body = { error: "Bad Request", message: "ID 必须是数字" };
-      return;
-    }
-
-    if (!this.store.has(id)) {
-      ctx.response.statusCode = 404;
-      ctx.response.body = { error: "Not Found", message: `${this.resourceName} #${id} 不存在` };
-      return;
-    }
-
-    this.store.delete(id);
-
-    ctx.response.statusCode = 200;
-    ctx.response.body = { message: `${this.resourceName} #${id} 删除成功` };
-  }
-
-  /** 获取存储（供种子数据使用） */
-  getStore(): Map<number, T> {
-    return this.store;
-  }
-
-  /** 获取 ID 生成器（供种子数据使用） */
-  getIdGenerator(): AutoIncrementId {
-    return this.idGenerator;
-  }
+function seedPosts(c: CrudController<Post>): void {
+  c.seed([
+    {
+      title: "TypeScript 入门",
+      content: "基本概念...",
+      authorId: 1,
+      tags: ["ts"],
+      createdAt: "2024-01-20T10:00:00Z",
+    },
+    {
+      title: "RESTful 设计",
+      content: "最佳实践...",
+      authorId: 2,
+      tags: ["api"],
+      createdAt: "2024-02-25T14:30:00Z",
+    },
+  ] as const as readonly Omit<Post, "id">[]);
 }
 
-// ============================================================
-// 内置中间件
-// ============================================================
-
-/** 日志中间件 */
-const loggerMiddleware: Middleware = async (ctx, next) => {
-  const start = Date.now();
-  const timestamp = new Date().toISOString();
-  console.log(`→ [${timestamp}] ${ctx.request.method} ${ctx.request.path}`);
-
-  await next();
-
-  const duration = Date.now() - start;
-  console.log(`← [${new Date().toISOString()}] ${ctx.request.method} ${ctx.request.path} ${ctx.response.statusCode} (${duration}ms)`);
-};
-
-/** CORS 中间件 */
-const corsMiddleware: Middleware = async (ctx, next) => {
-  ctx.response.headers["Access-Control-Allow-Origin"] = "*";
-  ctx.response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
-  ctx.response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
-
-  // 处理预检请求
-  if (ctx.request.method === "OPTIONS") {
-    ctx.response.statusCode = 204;
-    ctx.response.body = "";
-    return;
-  }
-
-  await next();
-};
-
-/** 认证中间件（模拟） */
-const authMiddleware: Middleware = async (ctx, next) => {
-  const authHeader = ctx.request.headers["authorization"];
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    ctx.response.statusCode = 401;
-    ctx.response.body = { error: "Unauthorized", message: "缺少或无效的 Authorization 头" };
-    return;
-  }
-
-  const token = authHeader.slice(7);
-  // 模拟 token 验证：接受 "secret-token" 或 "demo-key"
-  if (token !== "secret-token" && token !== "demo-key") {
-    ctx.response.statusCode = 401;
-    ctx.response.body = { error: "Unauthorized", message: "Token 无效" };
-    return;
-  }
-
-  // 将用户信息存入 state
-  ctx.state.user = { name: "Admin", role: "admin", token };
-  await next();
-};
-
-/** 请求计时中间件 */
-const timingMiddleware: Middleware = async (ctx, next) => {
-  const start = process.hrtime.bigint();
-  await next();
-  const end = process.hrtime.bigint();
-  const ms = Number(end - start) / 1_000_000;
-  ctx.response.headers["X-Response-Time"] = `${ms.toFixed(2)}ms`;
-};
-
-// ============================================================
-// 数据验证器
-// ============================================================
-
-interface User {
-  id: number;
-  name: string;
-  email: string;
-  role: "admin" | "editor" | "viewer";
-  createdAt: string;
-}
-
-interface Post {
-  id: number;
-  title: string;
-  content: string;
-  authorId: number;
-  tags: string[];
-  createdAt: string;
-}
-
-/** 用户验证 */
-function validateUser(data: unknown): { valid: boolean; errors: string[] } {
-  const errors: string[] = [];
-  if (!data || typeof data !== "object") {
-    return { valid: false, errors: ["请求体必须是对象"] };
-  }
-  const obj = data as Record<string, unknown>;
-
-  if (!obj.name || typeof obj.name !== "string" || obj.name.trim().length < 2) {
-    errors.push("name 必须是至少 2 个字符的字符串");
-  }
-  if (!obj.email || typeof obj.email !== "string" || !obj.email.includes("@")) {
-    errors.push("email 必须是有效的邮箱地址");
-  }
-  if (obj.role && !["admin", "editor", "viewer"].includes(obj.role as string)) {
-    errors.push("role 必须是 admin、editor 或 viewer 之一");
-  }
-
-  return { valid: errors.length === 0, errors };
-}
-
-/** 文章验证 */
-function validatePost(data: unknown): { valid: boolean; errors: string[] } {
-  const errors: string[] = [];
-  if (!data || typeof data !== "object") {
-    return { valid: false, errors: ["请求体必须是对象"] };
-  }
-  const obj = data as Record<string, unknown>;
-
-  if (!obj.title || typeof obj.title !== "string" || obj.title.trim().length < 1) {
-    errors.push("title 不能为空");
-  }
-  if (!obj.content || typeof obj.content !== "string") {
-    errors.push("content 不能为空");
-  }
-  if (obj.authorId !== undefined && typeof obj.authorId !== "number") {
-    errors.push("authorId 必须是数字");
-  }
-  if (obj.tags && !Array.isArray(obj.tags)) {
-    errors.push("tags 必须是数组");
-  }
-
-  return { valid: errors.length === 0, errors };
-}
-
-// ============================================================
-// 种子数据
-// ============================================================
-
-function seedUsers(controller: CrudController<User>): void {
-  const store = controller.getStore();
-  const idGen = controller.getIdGenerator();
-
-  const users: Omit<User, "id">[] = [
-    { name: "张三", email: "zhangsan@example.com", role: "admin", createdAt: "2024-01-15T08:00:00Z" },
-    { name: "李四", email: "lisi@example.com", role: "editor", createdAt: "2024-02-20T09:30:00Z" },
-    { name: "王五", email: "wangwu@example.com", role: "viewer", createdAt: "2024-03-10T14:15:00Z" },
-    { name: "赵六", email: "zhaoliu@example.com", role: "editor", createdAt: "2024-04-05T16:45:00Z" },
-    { name: "钱七", email: "qianqi@example.com", role: "viewer", createdAt: "2024-05-12T11:20:00Z" },
-  ];
-
-  for (const user of users) {
-    const id = idGen.next();
-    store.set(id, { id, ...user });
-  }
-}
-
-function seedPosts(controller: CrudController<Post>): void {
-  const store = controller.getStore();
-  const idGen = controller.getIdGenerator();
-
-  const posts: Omit<Post, "id">[] = [
-    { title: "TypeScript 入门指南", content: "本文介绍 TypeScript 的基本概念和安装方法...", authorId: 1, tags: ["typescript", "教程"], createdAt: "2024-01-20T10:00:00Z" },
-    { title: "RESTful API 设计最佳实践", content: "如何设计优雅的 RESTful API 接口...", authorId: 2, tags: ["api", "rest", "设计"], createdAt: "2024-02-25T14:30:00Z" },
-    { title: "Node.js 异步编程详解", content: "深入理解 Promise、async/await 和事件循环...", authorId: 2, tags: ["nodejs", "异步"], createdAt: "2024-03-15T09:00:00Z" },
-    { title: "前端性能优化策略", content: "从加载到渲染，全方位优化前端性能...", authorId: 4, tags: ["前端", "性能"], createdAt: "2024-04-10T16:00:00Z" },
-  ];
-
-  for (const post of posts) {
-    const id = idGen.next();
-    store.set(id, { id, ...post });
-  }
-}
-
-// ============================================================
-// 自定义路由处理函数
-// ============================================================
-
-/** 首页 — API 概览 */
 async function apiIndexHandler(ctx: Context): Promise<void> {
+  const endpoints = {
+    users: "GET/POST /api/users, GET/PUT/DELETE /api/users/:id",
+    posts: "GET/POST /api/posts, GET/PUT/DELETE /api/posts/:id",
+    admin: "GET /api/admin/dashboard (需认证)",
+  } as const;
   ctx.response.body = {
-    name: "RESTful API 模拟器",
-    version: "1.0.0",
-    description: "纯 TypeScript 实现的 RESTful API 模拟器",
-    endpoints: {
-      users: {
-        list: "GET    /api/users",
-        detail: "GET    /api/users/:id",
-        create: "POST   /api/users",
-        update: "PUT    /api/users/:id",
-        delete: "DELETE /api/users/:id",
-      },
-      posts: {
-        list: "GET    /api/posts",
-        detail: "GET    /api/posts/:id",
-        create: "POST   /api/posts",
-        update: "PUT    /api/posts/:id",
-        delete: "DELETE /api/posts/:id",
-      },
-      admin: {
-        dashboard: "GET    /api/admin/dashboard (需要认证)",
-      },
-      other: {
-        index: "GET    /",
-        health: "GET    /health",
-      },
-    },
-  };
+    kind: "success",
+    status: HttpStatus.OK,
+    data: { name: "RESTful API 模拟器", version: "1.0.0", endpoints },
+  } satisfies SuccessResponse<unknown>;
 }
 
-/** 健康检查 */
 async function healthCheckHandler(ctx: Context): Promise<void> {
+  const mem = process.memoryUsage();
   ctx.response.body = {
-    status: "ok",
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    memory: {
-      rss: `${(process.memoryUsage().rss / 1024 / 1024).toFixed(2)} MB`,
-      heapUsed: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`,
+    kind: "success",
+    status: HttpStatus.OK,
+    data: {
+      status: "ok",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      memory: {
+        rss: `${(mem.rss / 1048576).toFixed(2)}MB`,
+        heap: `${(mem.heapUsed / 1048576).toFixed(2)}MB`,
+      },
     },
-  };
+  } satisfies SuccessResponse<unknown>;
 }
 
-/** 管理后台（需要认证） */
 async function adminDashboardHandler(ctx: Context): Promise<void> {
+  const user = ctx.state[STATE_USER] ?? null;
   ctx.response.body = {
-    message: "欢迎进入管理后台",
-    user: ctx.state.user,
-    stats: {
-      totalRequests: "—",
-      activeUsers: "—",
-      systemStatus: "正常运行",
+    kind: "success",
+    status: HttpStatus.OK,
+    data: {
+      message: "欢迎进入管理后台",
+      user,
+      stats: { systemStatus: "正常" },
     },
-  };
+  } satisfies SuccessResponse<unknown>;
 }
 
 // ============================================================
-// 主函数：组装应用
+// 18. 主函数
 // ============================================================
 
 async function main(): Promise<void> {
   const app = new Application();
   const PORT = 3000;
 
-  // ── 全局中间件 ──
-  app.use(timingMiddleware);
-  app.use(corsMiddleware);
-  app.use(loggerMiddleware);
+  // 全局中间件（AbstractMiddleware 子类实例）
+  app
+    .use(new TimingMiddleware())
+    .use(new CorsMiddleware())
+    .use(new LoggerMiddleware());
 
-  // ── 基础路由 ──
   app.get("/", apiIndexHandler);
   app.get("/health", healthCheckHandler);
 
-  // ── 用户资源 CRUD ──
-  const userController = new CrudController<User>("用户", validateUser);
-  seedUsers(userController);
-  app.resource("/api/users", userController);
+  const userCtrl = new CrudController<User>("用户", validateUser);
+  seedUsers(userCtrl);
+  app.resource("/api/users", userCtrl);
 
-  // ── 文章资源 CRUD ──
-  const postController = new CrudController<Post>("文章", validatePost);
-  seedPosts(postController);
-  app.resource("/api/posts", postController);
+  const postCtrl = new CrudController<Post>("文章", validatePost);
+  seedPosts(postCtrl);
+  app.resource("/api/posts", postCtrl);
 
-  // ── 需要认证的管理路由 ──
-  app.get("/api/admin/dashboard", adminDashboardHandler, authMiddleware);
+  app.get(
+    "/api/admin/dashboard",
+    adminDashboardHandler,
+    new AuthMiddleware().toMiddleware(),
+  );
 
-  // ── 启动服务器 ──
   app.listen(PORT);
-
-  // ── 演示：发送模拟请求 ──
-  setTimeout(() => runDemoRequests(PORT), 500);
 }
 
-// ============================================================
-// 演示请求
-// ============================================================
-
-interface DemoResponse {
-  statusCode: number;
-  headers: http.IncomingHttpHeaders;
-  body: string;
-}
-
-/** 发送 HTTP 请求的工具函数 */
-function sendRequest(
-  method: string,
-  path: string,
-  options: { body?: unknown; headers?: Record<string, string> } = {}
-): Promise<DemoResponse> {
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        hostname: "localhost",
-        port: 3000,
-        path,
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          ...options.headers,
-        },
-        timeout: 5000,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () => {
-          resolve({
-            statusCode: res.statusCode || 0,
-            headers: res.headers,
-            body: Buffer.concat(chunks).toString("utf-8"),
-          });
-        });
-      }
-    );
-
-    req.on("error", reject);
-    req.on("timeout", () => {
-      req.destroy();
-      reject(new Error(`请求超时: ${method} ${path}`));
-    });
-
-    if (options.body) {
-      req.write(JSON.stringify(options.body));
-    }
-    req.end();
-  });
-}
-
-/** 打印响应 */
-function printResponse(label: string, res: DemoResponse): void {
-  console.log(`\n${"═".repeat(55)}`);
-  console.log(`📌 ${label}`);
-  console.log(`${"─".repeat(55)}`);
-  console.log(`   状态码: ${res.statusCode}`);
-
-  let bodyDisplay: string;
-  try {
-    const parsed = JSON.parse(res.body);
-    bodyDisplay = JSON.stringify(parsed, null, 2);
-  } catch {
-    bodyDisplay = res.body;
-  }
-
-  // 限制输出长度
-  if (bodyDisplay.length > 500) {
-    bodyDisplay = bodyDisplay.slice(0, 500) + "\n   ... (输出已截断)";
-  }
-  console.log(`   响应体: ${bodyDisplay.split("\n").join("\n            ")}`);
-}
-
-/** 运行演示请求序列 */
-async function runDemoRequests(port: number): Promise<void> {
-  console.log("\n" + "=".repeat(55));
-  console.log("  开始自动演示 RESTful API 请求");
-  console.log("=".repeat(55));
-
-  try {
-    // 1. API 概览
-    const r1 = await sendRequest("GET", "/");
-    printResponse("1. GET / — API 概览", r1);
-
-    // 2. 健康检查
-    const r2 = await sendRequest("GET", "/health");
-    printResponse("2. GET /health — 健康检查", r2);
-
-    // 3. 获取用户列表
-    const r3 = await sendRequest("GET", "/api/users");
-    printResponse("3. GET /api/users — 用户列表", r3);
-
-    // 4. 获取用户列表（带分页）
-    const r4 = await sendRequest("GET", "/api/users?page=1&pageSize=2");
-    printResponse("4. GET /api/users?page=1&pageSize=2 — 分页查询", r4);
-
-    // 5. 获取单个用户
-    const r5 = await sendRequest("GET", "/api/users/1");
-    printResponse("5. GET /api/users/1 — 用户详情", r5);
-
-    // 6. 创建用户
-    const r6 = await sendRequest("POST", "/api/users", {
-      body: { name: "孙八", email: "sunba@example.com", role: "viewer" },
-    });
-    printResponse("6. POST /api/users — 创建用户", r6);
-
-    // 7. 更新用户
-    const r7 = await sendRequest("PUT", "/api/users/3", {
-      body: { name: "王五（已更新）", email: "wangwu_new@example.com", role: "editor" },
-    });
-    printResponse("7. PUT /api/users/3 — 更新用户", r7);
-
-    // 8. 验证失败：创建缺少必填字段的用户
-    const r8 = await sendRequest("POST", "/api/users", {
-      body: { name: "A" }, // name 太短，缺少 email
-    });
-    printResponse("8. POST /api/users — 验证失败", r8);
-
-    // 9. 获取不存在的用户
-    const r9 = await sendRequest("GET", "/api/users/999");
-    printResponse("9. GET /api/users/999 — 404 未找到", r9);
-
-    // 10. 获取文章列表
-    const r10 = await sendRequest("GET", "/api/posts");
-    printResponse("10. GET /api/posts — 文章列表", r10);
-
-    // 11. 创建文章
-    const r11 = await sendRequest("POST", "/api/posts", {
-      body: {
-        title: "TypeScript 高级类型",
-        content: "深入探讨条件类型、映射类型和模板字面量类型...",
-        authorId: 1,
-        tags: ["typescript", "高级"],
-      },
-    });
-    printResponse("11. POST /api/posts — 创建文章", r11);
-
-    // 12. 删除用户
-    const r12 = await sendRequest("DELETE", "/api/users/5");
-    printResponse("12. DELETE /api/users/5 — 删除用户", r12);
-
-    // 13. 访问需要认证的接口（无 Token）
-    const r13 = await sendRequest("GET", "/api/admin/dashboard");
-    printResponse("13. GET /api/admin/dashboard — 未认证", r13);
-
-    // 14. 访问需要认证的接口（有 Token）
-    const r14 = await sendRequest("GET", "/api/admin/dashboard", {
-      headers: { Authorization: "Bearer demo-key" },
-    });
-    printResponse("14. GET /api/admin/dashboard — 已认证", r14);
-
-    // 15. 访问不存在的路由
-    const r15 = await sendRequest("GET", "/api/unknown");
-    printResponse("15. GET /api/unknown — 404 路由不存在", r15);
-  } catch (err) {
-    console.error("演示请求出错:", err);
-  }
-
-  console.log("\n" + "=".repeat(55));
-  console.log("  演示完成！服务器仍在运行中...");
-  console.log("  你可以使用 curl 或其他工具继续测试：");
-  console.log("    curl http://localhost:3000/");
-  console.log("    curl http://localhost:3000/api/users");
-  console.log("    curl http://localhost:3000/api/users/1");
-  console.log("    curl -X POST http://localhost:3000/api/users \\");
-  console.log('      -H "Content-Type: application/json" \\');
-  console.log('      -d \'{"name":"测试","email":"test@example.com","role":"viewer"}\'');
-  console.log("    curl -X DELETE http://localhost:3000/api/users/1");
-  console.log("=".repeat(55));
-}
-
-// 启动
 main().catch(console.error);

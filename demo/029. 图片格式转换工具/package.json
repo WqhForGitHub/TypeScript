@@ -11,7 +11,16 @@
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js"
   },
-  "keywords": ["typescript", "cli", "image", "convert", "ppm", "pgm", "pbm", "bmp"],
+  "keywords": [
+    "typescript",
+    "cli",
+    "image",
+    "convert",
+    "ppm",
+    "pgm",
+    "pbm",
+    "bmp"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {
